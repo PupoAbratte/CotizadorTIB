@@ -17,10 +17,9 @@ import pdfkit
 import re
 import unicodedata
 
-# === Google Sheets config ===
-SHEET_ID = "1ZSDWJfPbCzI6pcnrWQ3ViW-GcV0oMCmGehdvCzMdvxg"
-SERVICE_ACCOUNT_FILE = "service_account.json"
-WORKSHEET_NAME = "Quotes"
+import streamlit as st
+SHEET_ID = st.secrets["SHEET_ID"]
+WORKSHEET_NAME = st.secrets.get("WORKSHEET_NAME", "Quotes")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -29,8 +28,15 @@ SCOPES = [
 
 @st.cache_resource(show_spinner=False)
 def _sheet_client():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    from google.oauth2 import service_account
+    import gspread
+    creds_info = dict(st.secrets["gcp_service_account"])
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
     )
     gc = gspread.authorize(creds)
     return gc, creds.service_account_email
