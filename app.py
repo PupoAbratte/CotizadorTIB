@@ -374,10 +374,40 @@ def merge_weights(parser_weights: Dict[str, float], inferred: Dict[str, float]) 
                 pw[m] = v
     return pw
 
-# ===== PDF / wkhtmltopdf helpers =====
+# === PDF / wkhtmltopdf helpers ===
+import os
+import shutil
+
 def _pdfkit_config():
-    """Usa la ruta que verificaste con `which wkhtmltopdf`."""
-    return pdfkit.configuration(wkhtmltopdf="/usr/local/bin/wkhtmltopdf")
+    """
+    Detecta wkhtmltopdf en:
+      1) var de entorno WKHTMLTOPDF_PATH (opcional)
+      2) lo que diga `which wkhtmltopdf` (shutil.which)
+      3) rutas comunes
+    Lanza error claro si no está.
+    """
+    # 1) Variable de entorno (opcional)
+    env_path = os.environ.get("WKHTMLTOPDF_PATH")
+    if env_path and os.path.exists(env_path):
+        return pdfkit.configuration(wkhtmltopdf=env_path)
+
+    # 2) Búsqueda en PATH
+    which_path = shutil.which("wkhtmltopdf")
+    if which_path:
+        return pdfkit.configuration(wkhtmltopdf=which_path)
+
+    # 3) Rutas comunes
+    common = ["/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"]
+    for p in common:
+        if os.path.exists(p):
+            return pdfkit.configuration(wkhtmltopdf=p)
+
+    # 4) Mensaje claro si falta
+    raise OSError(
+        "wkhtmltopdf no está instalado en el entorno. "
+        "En Streamlit Cloud, agregá un archivo 'packages.txt' con la línea 'wkhtmltopdf' "
+        "y redeploy. Localmente, instalalo según tu sistema."
+    )
 
 def _safe_filename(s: str) -> str:
     s = (s or "").strip()
