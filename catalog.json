@@ -1,0 +1,61 @@
+{
+  "moneda": { "usd_to_cop": 4000 },
+
+  "precios": {
+    "A": 700,
+    "B": 1000,
+    "C_full": 1200,
+    "C_rebranding": 960,
+    "C_refresh": 600,
+    "D_full": 800,
+    "D_lite": 480,
+    "E_full": 600,
+    "E_lite": 360,
+    "E_plus": 900
+  },
+
+  "coeficientes": {
+    "cliente": {
+      "Corporativo": 1.25,
+      "Regional": 1.15,
+      "PyME": 1.00,
+      "Emprendimiento/Startup": 0.90,
+      "Fundacion": 0.80
+    },
+    "urgencia": {
+      "Express": 1.25,
+      "Rapida": 1.10,
+      "Normal": 1.00
+    },
+    "complejidad": {
+      "Alta": 1.10,
+      "Media": 1.00,
+      "Baja": 0.90
+    },
+    "idiomas": {
+      "base": 1.00,
+      "extra": 0.10
+    },
+    "stakeholders": {
+      "uno": 1.00,
+      "dos": 1.04,
+      "tres_o_mas": 1.08
+    },
+    "relacion": {
+      "Nuevo": 1.00,
+      "Recurrente": 0.95
+    },
+    "tope_total_coef": 1.40
+  },
+
+  "escenarios": {
+    "minimo": 0.85,
+    "logico": 1.00,
+    "maximo": 1.30
+  },
+
+  "bundles": {
+    "dos_mods": 1.00,
+    "tres_o_mas": 1.00
+  }
+}

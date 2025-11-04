@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Identidad ONG (C+D)",
+    "brief": "Logotipo, manual de marca y 5 aplicaciones de marca básicas (template ppt, template redes, brochure, banner de pie, hoja membretada). Sin estrategia/ADN.",
+    "inputs": {
+      "cliente": "ong",
+      "urgencia": "normal",
+      "complejidad": "media",
+      "idiomas": 1,
+      "stakeholders": 2
+    },
+    "expected_usd": { "min": 1500, "max": 1700 }
+  },
+  {
+    "name": "Startup semilla (B+C)",
+    "brief": "Definir el nombre, el concepto creativo del sistema y el logotipo. Desarrollo de la base estratégica mínima de marca.",
+    "inputs": {
+      "cliente": "emprendimiento",
+      "urgencia": "rapida",
+      "complejidad": "media",
+      "idiomas": 1,
+      "stakeholders": 1
+    },
+    "expected_usd": { "min": 1400, "max": 2150 }
+  },
+  {
+    "name": "Rebranding regional completo (A+B+C+D)",
+    "brief": "Auditoría de posicionamiento, definición de propósito y ADN, naming, rediseño de logotipo, sistema visual y brandbook con templates.",
+    "inputs": {
+      "cliente": "regional",
+      "urgencia": "normal",
+      "complejidad": "alta",
+      "idiomas": 1,
+      "stakeholders": 2
+    },
+    "expected_usd": { "min": 3000, "max": 3700 }
+  },
+  {
+    "name": "Campaña/activación (D+E)",
+    "brief": "Campaña digital y activación: piezas gráficas, banners, señalética de evento y landing. No incluye estrategia ni rediseño de marca.",
+    "inputs": {
+      "cliente": "pyme",
+      "urgencia": "express",
+      "complejidad": "media",
+      "idiomas": 1,
+      "stakeholders": 1
+    },
+    "expected_usd": { "min": 2000, "max": 3100 }
+  }
+]
