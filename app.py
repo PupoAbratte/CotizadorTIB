@@ -491,7 +491,7 @@ import os
 def save_and_generate_pdf(rate_display: float) -> bool:
     """
     Guarda la fila en Google Sheets y genera el PDF en memoria.
-    Usa tempfile para footer compatible con Cloud - CON DEBUGGING.
+    Footer embebido directamente en el HTML sin archivos externos.
     """
     try:
         q = st.session_state.get("last_quote") or {}
@@ -507,65 +507,81 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         if not ok:
             return False
 
-        # --- Contexto y render del HTML principal
+        # --- Contexto
         ctx = _build_quote_context_from_session(rate_display)
-        html = render_quote_html(**ctx)
-
-        # --- Footer HTML con tempfile
-        footer_html = render_quote_footer_html(**ctx)
         
-        # DEBUG: Mostrar contenido del footer
-        st.write("🔍 DEBUG - Footer HTML generado (primeros 200 chars):")
-        st.code(footer_html[:200])
+        # --- Generar HTML del body (quote.html)
+        body_html = render_quote_html(**ctx)
         
-        # Crear archivo temporal con el footer
-        with tempfile.NamedTemporaryFile(
-            mode='w', 
-            suffix='.html', 
-            delete=False, 
-            encoding='utf-8'
-        ) as tmp_footer:
-            tmp_footer.write(footer_html)
-            footer_path = tmp_footer.name
-
-        # DEBUG: Verificar archivo
-        st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
-        st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
-        if os.path.exists(footer_path):
-            st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
-
-        try:
-            # --- Configuración PDF
-            options = {
-                "encoding": "UTF-8",
-                "page-size": "A4",
-                "margin-top": "20mm",
-                "margin-right": "16mm",
-                "margin-bottom": "35mm",
-                "margin-left": "16mm",
-                "footer-html": footer_path,  # Sin prefijo file://
-                "footer-spacing": "5",
-                "enable-local-file-access": "",
-                "quiet": "",  # Reducir logs
+        # --- Construir footer inline (sin archivo externo)
+        footer_inline = f"""
+        <div class="pdf-footer" style="
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 35mm;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            color: #000000;
+            font-size: 10pt;
+            padding: 0 10mm;
+            background: #ffffff;
+            page-break-after: avoid;
+        ">
+            <img src="{ctx.get('studio_logo_url', 'https://thisisbravo.co/wp-content/uploads/2025/11/logo.png')}" 
+                 alt="This is Bravo logo" 
+                 style="max-height: 50px; display: block; margin: 0 auto 3mm;">
+            <div style="color: #000000; font-size: 10pt; font-weight: 400; line-height: 1.6;">
+                <strong>{ctx.get('studio_slogan', 'LATAM BRAND STUDIO')}</strong><br>
+                {ctx.get('estudio_mail', 'hola@thisisbravo.co')} · {ctx.get('estudio_web', 'www.thisisbravo.co')}
+            </div>
+        </div>
+        """
+        
+        # --- Insertar footer antes del </body>
+        if '</body>' in body_html:
+            complete_html = body_html.replace('</body>', f'{footer_inline}</body>')
+        else:
+            complete_html = body_html + footer_inline
+        
+        # --- Agregar CSS para @page en el <head>
+        footer_css = """
+        <style>
+            @page {
+                margin-bottom: 40mm;
             }
-            
-            # DEBUG: Mostrar opciones
-            st.write("🔍 DEBUG - PDF Options:")
-            st.json(options)
+            body {
+                margin-bottom: 40mm;
+            }
+            .page {
+                padding-bottom: 45mm !important;
+            }
+        </style>
+        """
+        
+        if '</head>' in complete_html:
+            complete_html = complete_html.replace('</head>', f'{footer_css}</head>')
 
-            pdf_bytes = pdfkit.from_string(
-                html, False, configuration=_pdfkit_config(), options=options
-            )
-            
-            st.write(f"✅ PDF generado: {len(pdf_bytes)} bytes")
-            
-        finally:
-            # Limpiar archivo temporal
-            try:
-                os.unlink(footer_path)
-                st.write("🗑️ Footer temporal eliminado")
-            except Exception as e:
-                st.write(f"⚠️ No se pudo eliminar footer: {e}")
+        # --- Configuración PDF
+        options = {
+            "encoding": "UTF-8",
+            "page-size": "A4",
+            "margin-top": "20mm",
+            "margin-right": "16mm",
+            "margin-bottom": "40mm",  # Espacio para footer
+            "margin-left": "16mm",
+            "enable-local-file-access": "",
+            "quiet": "",
+        }
+
+        pdf_bytes = pdfkit.from_string(
+            complete_html, False, configuration=_pdfkit_config(), options=options
+        )
 
         # --- Guardar en sesión para descarga
         st.session_state["last_pdf_bytes"] = pdf_bytes
@@ -575,9 +591,9 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         return True
 
     except Exception as e:
-        st.error(f"❌ Error completo: {type(e).__name__}: {e}")
+        st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
         import traceback
-        st.code(traceback.format_exc())
+        st.error(traceback.format_exc())
         return False
 
 # ===== Tasa de cambio en vivo con fallbacks y cache =====
