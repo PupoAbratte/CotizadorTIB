@@ -510,7 +510,7 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         # --- Footer HTML (se mantiene externo)
         footer_html = render_quote_footer_html(**ctx)
         HERE = Path(__file__).parent
-        footer_path = (HERE / "templates" / "quote_footer_temp.html").resolve()
+        footer_path = (HERE / "templates" / "quote_footer.html").resolve()
         with open(footer_path, "w", encoding="utf-8") as f:
             f.write(footer_html)
 
@@ -903,7 +903,8 @@ def render_quote_footer_html(
     estudio_nombre: str = "This is Bravo",
     estudio_web: str = "www.thisisbravo.co",
     estudio_mail: str = "hola@thisisbravo.co",
-    studio_logo_url: str = "https://thisisbravo.co/wp-content/uploads/2025/11/logo.png",
+    estudio_eslogan="LATAM BRAND STUDIO",
+    studio_logo_url: str = "https://thisisbravo.co/wp-content/uploads/2025/11/logo-2.png",
     **kwargs
 ) -> str:
     """Renderiza templates/quote_footer.html y devuelve el HTML final."""
@@ -920,6 +921,7 @@ def render_quote_footer_html(
         "studio_site": estudio_web,
         "studio_email": estudio_mail,
         "studio_logo_url": studio_logo_url,
+        "studio_slogan": estudio_eslogan,
     }
     return tpl.render(**context)
 
