@@ -17,6 +17,7 @@ import pdfkit
 import re
 import unicodedata
 import tempfile
+import os
 
 import streamlit as st
 SHEET_ID = st.secrets["SHEET_ID"]
@@ -484,13 +485,14 @@ def _build_quote_context_from_session(rate_display: float) -> dict:
     )
 
 # === Helper unificado: guarda en Sheets + genera PDF (sin mensajes internos) ===
+import tempfile
+import os
+
 def save_and_generate_pdf(rate_display: float) -> bool:
     """
     Guarda la fila en Google Sheets y genera el PDF en memoria.
-    Header embebido dentro de quote.html (sin header externo).
-    Footer externo (quote_footer.html) generado en un archivo temporal (Cloud-safe).
+    Usa tempfile para footer compatible con Cloud.
     """
-    import tempfile
     try:
         q = st.session_state.get("last_quote") or {}
         if not q:
@@ -509,51 +511,47 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         ctx = _build_quote_context_from_session(rate_display)
         html = render_quote_html(**ctx)
 
-        # --- Footer HTML (render) → escribir en archivo temporal (writable en Cloud)
+        # --- Footer HTML con tempfile
         footer_html = render_quote_footer_html(**ctx)
-        tmp_footer = tempfile.NamedTemporaryFile(
-            suffix=".html", mode="w", encoding="utf-8", delete=False
-        )
-        try:
+        
+        # Crear archivo temporal con el footer
+        with tempfile.NamedTemporaryFile(
+            mode='w', 
+            suffix='.html', 
+            delete=False, 
+            encoding='utf-8'
+        ) as tmp_footer:
             tmp_footer.write(footer_html)
-            tmp_footer.flush()
             footer_path = tmp_footer.name
-        finally:
-            tmp_footer.close()
 
-        # --- Configuración PDF
-        options = {
-            "encoding": "UTF-8",
-            "page-size": "A4",
-            "margin-top": "20mm",      # header embebido
-            "margin-right": "16mm",
-            "margin-bottom": "35mm",   # espacio para footer
-            "margin-left": "16mm",
-            "footer-html": footer_path,           # usar path directo del temp file
-            "footer-spacing": "5",
-            "enable-local-file-access": None,     # flag sin valor
-            "print-media-type": None,
-            "load-error-handling": "ignore",
-            "load-media-error-handling": "ignore",
-        }
-
-        pdf_bytes = pdfkit.from_string(
-            html, False, configuration=_pdfkit_config(), options=options
-        )
-
-        # --- Limpieza temporal
         try:
-            Path(footer_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+            # --- Configuración PDF
+            options = {
+                "encoding": "UTF-8",
+                "page-size": "A4",
+                "margin-top": "20mm",
+                "margin-right": "16mm",
+                "margin-bottom": "35mm",
+                "margin-left": "16mm",
+                "footer-html": footer_path,
+                "footer-spacing": "5",
+                "enable-local-file-access": "",
+            }
+
+            pdf_bytes = pdfkit.from_string(
+                html, False, configuration=_pdfkit_config(), options=options
+            )
+        finally:
+            # Limpiar archivo temporal
+            try:
+                os.unlink(footer_path)
+            except:
+                pass
 
         # --- Guardar en sesión para descarga
         st.session_state["last_pdf_bytes"] = pdf_bytes
         fecha = datetime.now().strftime("%Y%m%d")
         cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
-        choice_slug = {"Mínimo": "minimo", "Lógico": "logico", "Máximo": "maximo"}.get(
-            ctx["scenario_name"], "opcion"
-        )
         st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
         return True
 
