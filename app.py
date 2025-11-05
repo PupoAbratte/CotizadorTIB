@@ -487,8 +487,9 @@ def save_and_generate_pdf(rate_display: float) -> bool:
     """
     Guarda la fila en Google Sheets y genera el PDF en memoria.
     Header embebido dentro de quote.html (sin header externo).
-    Footer sigue siendo externo (quote_footer.html).
+    Footer externo (quote_footer.html) generado en un archivo temporal (Cloud-safe).
     """
+    import tempfile
     try:
         q = st.session_state.get("last_quote") or {}
         if not q:
@@ -507,24 +508,32 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         ctx = _build_quote_context_from_session(rate_display)
         html = render_quote_html(**ctx)
 
-        # --- Footer HTML (se mantiene externo)
+        # --- Footer HTML (render) → escribir en archivo temporal (writable en Cloud)
         footer_html = render_quote_footer_html(**ctx)
-        HERE = Path(__file__).parent
-        footer_path = (HERE / "templates" / "quote_footer.html").resolve()
-        with open(footer_path, "w", encoding="utf-8") as f:
-            f.write(footer_html)
+        tmp_footer = tempfile.NamedTemporaryFile(
+            suffix=".html", mode="w", encoding="utf-8", delete=False
+        )
+        try:
+            tmp_footer.write(footer_html)
+            tmp_footer.flush()
+            footer_path = tmp_footer.name
+        finally:
+            tmp_footer.close()
 
         # --- Configuración PDF
         options = {
             "encoding": "UTF-8",
             "page-size": "A4",
-            "margin-top": "20mm",          # header embebido → margen superior normal
+            "margin-top": "20mm",      # header embebido
             "margin-right": "16mm",
-            "margin-bottom": "35mm",       # espacio para footer
+            "margin-bottom": "35mm",   # espacio para footer
             "margin-left": "16mm",
-            "footer-html": f"file://{footer_path}",
+            "footer-html": footer_path,           # usar path directo del temp file
             "footer-spacing": "5",
-            "enable-local-file-access": "",
+            "enable-local-file-access": None,     # flag sin valor
+            "print-media-type": None,
+            "load-error-handling": "ignore",
+            "load-media-error-handling": "ignore",
         }
 
         pdf_bytes = pdfkit.from_string(
@@ -533,8 +542,8 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
         # --- Limpieza temporal
         try:
-            footer_path.unlink()
-        except:
+            Path(footer_path).unlink(missing_ok=True)
+        except Exception:
             pass
 
         # --- Guardar en sesión para descarga
