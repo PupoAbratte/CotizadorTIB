@@ -491,7 +491,7 @@ import os
 def save_and_generate_pdf(rate_display: float) -> bool:
     """
     Guarda la fila en Google Sheets y genera el PDF en memoria.
-    Usa tempfile para footer compatible con Cloud.
+    Usa tempfile para footer compatible con Cloud - CON DEBUGGING.
     """
     try:
         q = st.session_state.get("last_quote") or {}
@@ -514,6 +514,10 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         # --- Footer HTML con tempfile
         footer_html = render_quote_footer_html(**ctx)
         
+        # DEBUG: Mostrar contenido del footer
+        st.write("🔍 DEBUG - Footer HTML generado (primeros 200 chars):")
+        st.code(footer_html[:200])
+        
         # Crear archivo temporal con el footer
         with tempfile.NamedTemporaryFile(
             mode='w', 
@@ -524,6 +528,12 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             tmp_footer.write(footer_html)
             footer_path = tmp_footer.name
 
+        # DEBUG: Verificar archivo
+        st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
+        st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
+        if os.path.exists(footer_path):
+            st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
+
         try:
             # --- Configuración PDF
             options = {
@@ -533,20 +543,29 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 "margin-right": "16mm",
                 "margin-bottom": "35mm",
                 "margin-left": "16mm",
-                "footer-html": footer_path,
+                "footer-html": footer_path,  # Sin prefijo file://
                 "footer-spacing": "5",
                 "enable-local-file-access": "",
+                "quiet": "",  # Reducir logs
             }
+            
+            # DEBUG: Mostrar opciones
+            st.write("🔍 DEBUG - PDF Options:")
+            st.json(options)
 
             pdf_bytes = pdfkit.from_string(
                 html, False, configuration=_pdfkit_config(), options=options
             )
+            
+            st.write(f"✅ PDF generado: {len(pdf_bytes)} bytes")
+            
         finally:
             # Limpiar archivo temporal
             try:
                 os.unlink(footer_path)
-            except:
-                pass
+                st.write("🗑️ Footer temporal eliminado")
+            except Exception as e:
+                st.write(f"⚠️ No se pudo eliminar footer: {e}")
 
         # --- Guardar en sesión para descarga
         st.session_state["last_pdf_bytes"] = pdf_bytes
@@ -556,7 +575,9 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         return True
 
     except Exception as e:
-        st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
+        st.error(f"❌ Error completo: {type(e).__name__}: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return False
 
 # ===== Tasa de cambio en vivo con fallbacks y cache =====
