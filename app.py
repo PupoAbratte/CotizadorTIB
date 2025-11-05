@@ -56,6 +56,45 @@ def test_sheets_connection() -> dict:
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
 
+# --- Auth simple (usa .streamlit/secrets.toml [auth.users]) ---
+def require_login():
+    # Lee usuarios del secrets: [auth.users]
+    users = dict(st.secrets.get("auth", {}).get("users", {}))
+
+    # Si no hay usuarios configurados, no bloquea (modo abierto)
+    if not users:
+        return True
+
+    # Si ya está autenticado, muestra estado y opción de logout
+    if st.session_state.get("auth_ok"):
+        with st.sidebar:
+            st.success(f"Sesión: {st.session_state.get('auth_email','')}")
+            if st.button("Cerrar sesión"):
+                for k in ("auth_ok", "auth_email"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+        return True
+
+    # Formulario de acceso (bloquea la app hasta loguear)
+    st.title("Accedé con tus credenciales")
+    with st.form("login_form", clear_on_submit=False):
+        email = st.text_input("Email", value="", key="auth_email_input")
+        pwd = st.text_input("Contraseña", type="password", value="", key="auth_pwd_input")
+        submit = st.form_submit_button("Entrar")
+
+    if submit:
+        if email in users and pwd == users[email]:
+            st.session_state["auth_ok"] = True
+            st.session_state["auth_email"] = email
+            st.rerun()
+        else:
+            st.error("Credenciales inválidas. Probá de nuevo.")
+
+    st.stop()  # Detiene la ejecución hasta que se autentique
+
+# Llamar al guardia inmediatamente después de set_page_config
+require_login()
+
 # --- Estilos para tarjetas de resultado ---
 st.markdown("""
 <style>
