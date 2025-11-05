@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pdfkit
 import re
 import unicodedata
+import tempfile
 
 import streamlit as st
 SHEET_ID = st.secrets["SHEET_ID"]
