@@ -491,7 +491,7 @@ import os
 def save_and_generate_pdf(rate_display: float) -> bool:
     """
     Guarda la fila en Google Sheets y genera el PDF en memoria.
-    Footer embebido directamente en el HTML sin archivos externos.
+    Footer repetido en cada página usando archivo temporal optimizado para wkhtmltopdf.
     """
     try:
         q = st.session_state.get("last_quote") or {}
@@ -513,75 +513,87 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         # --- Generar HTML del body (quote.html)
         body_html = render_quote_html(**ctx)
         
-        # --- Construir footer inline (sin archivo externo)
-        footer_inline = f"""
-        <div class="pdf-footer" style="
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 35mm;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
+        # --- Crear footer HTML simplificado y optimizado para wkhtmltopdf
+        footer_html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{
+            margin: 0;
+            padding: 8mm 0 0 0;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            text-align: center;
+            font-size: 9pt;
             color: #000000;
-            font-size: 10pt;
-            padding: 0 10mm;
-            background: #ffffff;
-            page-break-after: avoid;
-        ">
-            <img src="{ctx.get('studio_logo_url', 'https://thisisbravo.co/wp-content/uploads/2025/11/logo.png')}" 
-                 alt="This is Bravo logo" 
-                 style="max-height: 50px; display: block; margin: 0 auto 3mm;">
-            <div style="color: #000000; font-size: 10pt; font-weight: 400; line-height: 1.6;">
-                <strong>{ctx.get('studio_slogan', 'LATAM BRAND STUDIO')}</strong><br>
-                {ctx.get('estudio_mail', 'hola@thisisbravo.co')} · {ctx.get('estudio_web', 'www.thisisbravo.co')}
-            </div>
+        }}
+        .footer-content {{
+            display: block;
+            width: 100%;
+        }}
+        .footer-content img {{
+            max-height: 45px;
+            display: block;
+            margin: 0 auto 2mm;
+        }}
+        .footer-text {{
+            color: #000000;
+            font-size: 9pt;
+            line-height: 1.4;
+        }}
+    </style>
+</head>
+<body>
+    <div class="footer-content">
+        <img src="{ctx.get('studio_logo_url', 'https://thisisbravo.co/wp-content/uploads/2025/11/logo.png')}" alt="Logo">
+        <div class="footer-text">
+            <strong>{ctx.get('studio_slogan', 'LATAM BRAND STUDIO')}</strong><br>
+            {ctx.get('estudio_mail', 'hola@thisisbravo.co')} · {ctx.get('estudio_web', 'www.thisisbravo.co')}
         </div>
-        """
+    </div>
+</body>
+</html>"""
         
-        # --- Insertar footer antes del </body>
-        if '</body>' in body_html:
-            complete_html = body_html.replace('</body>', f'{footer_inline}</body>')
-        else:
-            complete_html = body_html + footer_inline
+        # --- Crear archivo temporal para el footer
+        import tempfile
+        import os
         
-        # --- Agregar CSS para @page en el <head>
-        footer_css = """
-        <style>
-            @page {
-                margin-bottom: 40mm;
-            }
-            body {
-                margin-bottom: 40mm;
-            }
-            .page {
-                padding-bottom: 45mm !important;
-            }
-        </style>
-        """
-        
-        if '</head>' in complete_html:
-            complete_html = complete_html.replace('</head>', f'{footer_css}</head>')
+        with tempfile.NamedTemporaryFile(
+            mode='w', 
+            suffix='.html', 
+            delete=False, 
+            encoding='utf-8'
+        ) as tmp_footer:
+            tmp_footer.write(footer_html_content)
+            footer_path = tmp_footer.name
 
-        # --- Configuración PDF
-        options = {
-            "encoding": "UTF-8",
-            "page-size": "A4",
-            "margin-top": "20mm",
-            "margin-right": "16mm",
-            "margin-bottom": "40mm",  # Espacio para footer
-            "margin-left": "16mm",
-            "enable-local-file-access": "",
-            "quiet": "",
-        }
+        try:
+            # --- Configuración PDF con footer externo
+            options = {
+                "encoding": "UTF-8",
+                "page-size": "A4",
+                "margin-top": "20mm",
+                "margin-right": "16mm",
+                "margin-bottom": "35mm",      # Espacio reservado para footer
+                "margin-left": "16mm",
+                "footer-html": footer_path,   # Archivo temporal con footer
+                "footer-spacing": "3",        # Espacio entre contenido y footer
+                "enable-local-file-access": "",
+                "no-stop-slow-scripts": "",
+                "javascript-delay": "1000",   # Dar tiempo para cargar imágenes
+                "quiet": "",
+            }
 
-        pdf_bytes = pdfkit.from_string(
-            complete_html, False, configuration=_pdfkit_config(), options=options
-        )
+            pdf_bytes = pdfkit.from_string(
+                body_html, False, configuration=_pdfkit_config(), options=options
+            )
+            
+        finally:
+            # Limpiar archivo temporal
+            try:
+                os.unlink(footer_path)
+            except:
+                pass
 
         # --- Guardar en sesión para descarga
         st.session_state["last_pdf_bytes"] = pdf_bytes
