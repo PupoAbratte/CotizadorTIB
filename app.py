@@ -866,7 +866,6 @@ def render_quote_html(
             continue
         if w <= 0:
             continue
-        nivel = {1.0: "full", 0.8: "rebranding", 0.65: "lite", 0.6: "lite", 0.5: "refresh", 1.5: "plus"}.get(round(w,2), f"{w}×")
         breakdown.append({"modulo": k, "nombre": etiquetas.get(k, k), "nivel": nivel})
 
     env = Environment(
