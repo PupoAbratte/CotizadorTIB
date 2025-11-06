@@ -513,8 +513,13 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
         try:
             # --- Configuración PDF con footer externo
-            footer_dir = str(tmp_dir.resolve())  
-            footer_url = "file://" + footer_path
+            remote_footer_url = os.getenv("BRAVO_REMOTE_FOOTER_URL") or getattr(st.secrets, "BRAVO_REMOTE_FOOTER_URL", "")
+            if remote_footer_url:
+                footer_url = remote_footer_url
+                footer_dir = None            # no hace falta allow para https
+            else:
+                footer_dir = str(tmp_dir.resolve())
+                footer_dir = str(tmp_dir.resolve())
 
             # Opciones wkhtmltopdf
             # Claves del cambio:
@@ -533,19 +538,24 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 "enable-local-file-access": "",
                 "no-stop-slow-scripts": "",
                 "javascript-delay": "1000",   # Dar tiempo para cargar imágenes
-                "allow": footer_dir,         # ✅ permitir leer el dir del footer
                 # "quiet": "",
             }
+            if footer_dir:
+                options["allow"] = footer_dir
 
             # DEBUG: Mostrar opciones
             st.write("🔍 DEBUG - PDF Options:")
             st.json(options)
             st.write(f"🔍 DEBUG - footer_url: {footer_url}")
-            st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
-            st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
-            if os.path.exists(footer_path):
-                st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
-            st.write(f"🔍 DEBUG - Footer dir resolved: {tmp_dir.resolve()}")  # [NUEVO]
+            st.write(f"🔍 DEBUG - remote mode: {bool(remote_footer_url)}")
+            
+            # Solo mostrar detalles del archivo si NO estamos en modo remoto
+            if not remote_footer_url:
+                st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
+                st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
+                if os.path.exists(footer_path):
+                    st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
+                st.write(f"🔍 DEBUG - Footer dir resolved: {tmp_dir.resolve()}")
 
             pdf_bytes = pdfkit.from_string(
                 body_html, False, configuration=_pdfkit_config(), options=options
