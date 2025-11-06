@@ -601,6 +601,19 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 options=options
             )
 
+            # --- Guardar en sesión para descarga
+            st.session_state["last_pdf_bytes"] = pdf_bytes
+            fecha = datetime.now().strftime("%Y%m%d")
+            cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
+            st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
+            return True
+
+        except Exception as e:
+            st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
+            import traceback
+            st.error(traceback.format_exc())
+            return False
+
         finally:
             # Limpiar archivo temporal SOLO si fue creado
             try:
@@ -608,19 +621,6 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                     os.unlink(footer_path)
             except Exception:
                 pass
-
-        # --- Guardar en sesión para descarga
-        st.session_state["last_pdf_bytes"] = pdf_bytes
-        fecha = datetime.now().strftime("%Y%m%d")
-        cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
-        st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
-        return True
-
-        except Exception as e:
-            st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
-            import traceback
-            st.error(traceback.format_exc())
-            return False
 
 # ===== Tasa de cambio en vivo con fallbacks y cache =====
 @st.cache_data(ttl=3600, show_spinner=False)
