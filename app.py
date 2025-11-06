@@ -519,7 +519,6 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 os.getenv("BRAVO_REMOTE_FOOTER_URL")
                 or (st.secrets.get("BRAVO_REMOTE_FOOTER_URL") if hasattr(st, "secrets") else "")
             )
-
             if remote_footer_url:
                 # Modo remoto: no necesitamos archivo local ni allow
                 footer_url = remote_footer_url
@@ -528,6 +527,8 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 # Modo local: crear/asegurar directorio controlado y archivo temporal
                 tmp_dir = Path("tmp_assets")
                 tmp_dir.mkdir(exist_ok=True)
+                # ✅ Renderizar el footer SOLO en modo local
+                footer_html = render_quote_footer_html(**ctx)
 
                 with tempfile.NamedTemporaryFile(
                     mode="w",
