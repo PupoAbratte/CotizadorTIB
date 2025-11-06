@@ -521,11 +521,7 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             #    html = render_quote_html(**ctx)
 
             # 1) Determinar fuente del footer (remoto vs local)
-            remote_footer_url = (
-                os.getenv("BRAVO_REMOTE_FOOTER_URL")
-                or (st.secrets.get("BRAVO_REMOTE_FOOTER_URL", "") if hasattr(st, "secrets") else "")
-                or (st.secrets.get("general", {}).get("BRAVO_REMOTE_FOOTER_URL", "") if hasattr(st, "secrets") else "")
-            )
+            remote_footer_url = None
 
             used_footer_file = False        # bandera para saber si creamos archivo temporal
             footer_path = None              # ruta del archivo temporal (si aplica)
