@@ -512,23 +512,34 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             footer_path = tmp_footer.name
 
         try:
-            # --- Configuración PDF (definir SIEMPRE footer_url antes de options)
+            # --- Configuración PDF (bloque depurado, seguro y autocontenido)
 
-            # 1) Intentar modo remoto (HTTPS)
+            # 0) HTML principal (asegúrate de haberlo definido antes como `html`)
+            #    Si tu variable se llamaba `body_html`, usa esa al construir `html` antes de este bloque.
+            #    Ejemplo arriba en tu flujo:
+            #    ctx = _build_quote_context_from_session(rate_display)
+            #    html = render_quote_html(**ctx)
+
+            # 1) Determinar fuente del footer (remoto vs local)
             remote_footer_url = (
                 os.getenv("BRAVO_REMOTE_FOOTER_URL")
                 or (st.secrets.get("BRAVO_REMOTE_FOOTER_URL", "") if hasattr(st, "secrets") else "")
                 or (st.secrets.get("general", {}).get("BRAVO_REMOTE_FOOTER_URL", "") if hasattr(st, "secrets") else "")
             )
+
+            used_footer_file = False        # bandera para saber si creamos archivo temporal
+            footer_path = None              # ruta del archivo temporal (si aplica)
+            footer_dir = None               # dir permitido (si aplica)
+
             if remote_footer_url:
-                # Modo remoto: no necesitamos archivo local ni allow
+                # Modo remoto: no se crea archivo local ni se necesita allow
                 footer_url = remote_footer_url
-                footer_dir = None
             else:
                 # Modo local: crear/asegurar directorio controlado y archivo temporal
                 tmp_dir = Path("tmp_assets")
                 tmp_dir.mkdir(exist_ok=True)
-                # ✅ Renderizar el footer SOLO en modo local
+
+                # Renderizar footer SOLO en modo local
                 footer_html = render_quote_footer_html(**ctx)
 
                 with tempfile.NamedTemporaryFile(
@@ -543,8 +554,9 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
                 footer_dir = str(tmp_dir.resolve())
                 footer_url = "file://" + footer_path
+                used_footer_file = True
 
-            # 2) Construir options *después* de tener footer_url
+            # 2) Construir opciones (sumamos headers y tolerancia de carga remota)
             options = {
                 "encoding": "UTF-8",
                 "page-size": "A4",
@@ -552,43 +564,49 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 "margin-right": "16mm",
                 "margin-bottom": "35mm",
                 "margin-left": "16mm",
-                "footer-html": footer_url,
+                "footer-html": footer_url,              # remoto (https) o local (file://)
                 "footer-spacing": "5",
                 "enable-local-file-access": "",
-                "load-error-handling": "ignore",             # ✅ no abortar por warnings
-                "custom-header": [                           # ✅ UA “normal”
-                    ("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                                    "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"),
+                "load-error-handling": "ignore",
+                "custom-header": [
+                    ("User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"),
                 ],
-                # "quiet": "",  # opcional, dejar comentado mientras diagnosticamos
+                # "quiet": "",  # opcional (diagnóstico)
             }
-            if footer_dir:
+            if used_footer_file and footer_dir:
                 options["allow"] = footer_dir
 
-            # 3) DEBUG (condicionado para no confundir)
-            st.write("🔍 DEBUG - PDF Options:")
-            st.json(options)
+            # 3) DEBUG mínimo (limpio y no redundante)
+            st.write("🔍 DEBUG - PDF Options:"); st.json(options)
             st.write(f"🔍 DEBUG - footer_url: {footer_url}")
             st.write(f"🔍 DEBUG - remote mode: {bool(remote_footer_url)}")
-            if not remote_footer_url:
+            if used_footer_file:
                 st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
                 st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
-                if os.path.exists(footer_path):
+                if footer_path and os.path.exists(footer_path):
                     st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
                 st.write(f"🔍 DEBUG - Footer dir resolved: {footer_dir}")
-            st.write(f"🔍 DEBUG - env set: {bool(os.getenv('BRAVO_REMOTE_FOOTER_URL'))}")
-            st.write(f"🔍 DEBUG - secrets top-level: {('BRAVO_REMOTE_FOOTER_URL' in st.secrets) if hasattr(st, 'secrets') else False}")
-            st.write(f"🔍 DEBUG - secrets [general]: {('general' in st.secrets and 'BRAVO_REMOTE_FOOTER_URL' in st.secrets['general']) if hasattr(st, 'secrets') else False}")
+            else:
+                st.write(f"🔍 DEBUG - env set: {bool(os.getenv('BRAVO_REMOTE_FOOTER_URL'))}")
+                st.write(f"🔍 DEBUG - secrets top-level: {('BRAVO_REMOTE_FOOTER_URL' in st.secrets) if hasattr(st, 'secrets') else False}")
+                st.write(f"🔍 DEBUG - secrets [general]: {('general' in st.secrets and 'BRAVO_REMOTE_FOOTER_URL' in st.secrets['general']) if hasattr(st, 'secrets') else False}")
 
+            # 4) Generar PDF
             pdf_bytes = pdfkit.from_string(
-                body_html, False, configuration=_pdfkit_config(), options=options
+                html,  # ⬅️ Usa el HTML principal (ajusta si tu var se llama distinto)
+                False,
+                configuration=_pdfkit_config(),
+                options=options
             )
-            
+
         finally:
-            # Limpiar archivo temporal
+            # Limpiar archivo temporal SOLO si fue creado
             try:
-                os.unlink(footer_path)
-            except:
+                if used_footer_file and footer_path and os.path.exists(footer_path):
+                    os.unlink(footer_path)
+            except Exception:
                 pass
 
         # --- Guardar en sesión para descarga
@@ -598,11 +616,11 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
         return True
 
-    except Exception as e:
-        st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
-        import traceback
-        st.error(traceback.format_exc())
-        return False
+        except Exception as e:
+            st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
+            import traceback
+            st.error(traceback.format_exc())
+            return False
 
 # ===== Tasa de cambio en vivo con fallbacks y cache =====
 @st.cache_data(ttl=3600, show_spinner=False)
