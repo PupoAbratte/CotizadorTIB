@@ -65,6 +65,7 @@
       background: none;
       border-radius: 0;
       color: #3A2E8C;
+      margin-bottom: 2mm
     }
     h3 {
       font-size: 11pt;
@@ -87,6 +88,19 @@
     p { margin: 0 0 5mm; }
     ul { margin: 0 0 6mm 6mm; padding: 0; }
     li { margin: 2mm 0; }
+    /* Ajustes visuales para Acciones y Entregables */
+    ul {
+      list-style-type: disc;
+      padding-left: 3mm;
+    }
+    ul ul {
+      margin: 1mm 0 4mm 6mm;
+      list-style-type: circle;
+    }
+    ul ul li {
+      margin: 0.5mm 0;
+      line-height: 1.3;
+    }
 
     .rule {
       height: 1px;
@@ -163,27 +177,24 @@
     <div class="rule"></div>
 
     <!-- ACCIONES -->
-    <h2>Acciones</h2>
-    {% if breakdown and breakdown|length > 0 %}
+    <h2>Acciones y entregables</h2>
+    {% if acciones_expand and acciones_expand|length > 0 %}
       <ul>
-        {% for b in breakdown %}
-          <li>{{ b.nombre }}</li>
+        {% for a in acciones_expand %}
+          <li>
+            <strong>{{ a.accion }}</strong>
+            {% if a.entregables and a.entregables|length > 0 %}
+              <ul style="margin-top:3mm;">
+                {% for e in a.entregables %}
+                  <li>{{ e }}</li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </li>
         {% endfor %}
       </ul>
     {% else %}
       <p>Se detallarán en el kickoff en conjunto con el equipo del cliente.</p>
-    {% endif %}
-
-    <!-- ENTREGABLES -->
-    <h2>Entregables</h2>
-    {% if deliverables and deliverables|length > 0 %}
-      <ul>
-        {% for d in deliverables %}
-          <li>{{ d }}</li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p>Se especificarán en la hoja de ruta inicial y el brief técnico de cada pieza.</p>
     {% endif %}
 
     <!-- HONORARIOS -->

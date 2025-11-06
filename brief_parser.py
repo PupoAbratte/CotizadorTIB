@@ -5,6 +5,96 @@ import re
 import unicodedata
 from typing import Dict, Any, List, Optional
 
+# Biblioteca consolidada de entregables por módulo (A–E) y nivel
+# A: Research | B: Brand DNA | C: Creación | D: Brandbook | E: Implementación
+
+DELIVERABLES = {
+    "A": {  # Research
+        # Si preferís, podemos usar lite/full directamente; tu helper actual ya soporta ambos.
+        "lite": [
+            "Benchmark de hasta cinco marcas del sector",
+            "Mapa rápido de tendencias visuales y comunicacionales",
+            "Síntesis de hallazgos clave del análisis",
+        ],
+        "full": [
+            "Benchmark gráfico, comunicacional y de posicionamiento de la categoría",
+            "Análisis de audiencias, hábitos e insights",
+            "Matriz de posición competitiva y perfil detallado de audiencias",
+        ],
+        # "plus": []  # Eliminado según decisión
+    },
+
+    "B": {  # Brand DNA (acumulativo)
+        "lite": [
+            "Atributos esenciales y personalidad base de la marca",
+            "Promesa de valor central",
+        ],
+        "full": [
+            "Propósito, valores y principios que guían la marca",
+            "Territorios y posicionamiento estratégico",
+            "Concepto y síntesis accionable de la marca",
+        ],
+        "plus": [
+            "Narrativa y concepto rector de la marca",
+            "Tono de voz, arquetipo y manifiesto de marca",
+        ],
+    },
+
+    "C": {  # Creación (acumulativo; quitamos naming de Lite como pediste)
+        "lite": [
+            "Definición preliminar del enfoque creativo",
+            "Bocetos o primeras aproximaciones al sistema visual",
+        ],
+        "full": [
+            "Desarrollo y diseño del isologotipo",
+            "Variantes de logotipo y arquitectura del sistema visual",
+            "Consolidación del concepto creativo de la marca",
+        ],
+        "plus": [
+            "Validación avanzada de nombre y sistema visual",
+            "Sistema de naming extendido (familia de productos o servicios)",
+            "Concepto creativo integral aplicado a la marca",
+        ],
+    },
+
+    "D": {  # Brandbook (NO acumulativo por decisión; ajustamos lógica en el siguiente paso)
+        "lite": [
+            "Guía de uso y buenas prácticas de marca",
+            "Sistema visual básico con isologotipo, paleta de colores y tipografías",
+            "Manual breve con lineamientos esenciales de identidad",
+        ],
+        "full": [
+            "Manual de marca completo con estructura visual detallada: paleta, tipografías, versiones del isologotipo y estilo fotográfico",
+            "Desarrollo de recursos gráficos y visuales complementarios",
+            "Lineamientos para coherencia visual en todas las aplicaciones",
+        ],
+        "plus": [
+            "Manual avanzado con templates y aplicaciones extendidas",
+            "Sistema visual complementario (íconos, tramas, recursos gráficos)",
+            "Lineamientos para animación, uso digital y motion branding",
+        ],
+    },
+
+    "E": {  # Implementación (acumulativo; Full incluye Lite, Plus incluye Full)
+        "lite": [
+            "Hasta cinco aplicaciones digitales de marca: template PPT (hasta 5 slides), template DOC, piezas para redes sociales, avatares y/o perfiles, firma de correo",
+            "Ajuste técnico de logotipo y paleta para uso digital",
+        ],
+        "full": [
+            # Extras sobre Lite (la acumulación la hace el helper)
+            "Aplicaciones gráficas impresas: banners, papelería y/o señalética",
+            "Diseño y diagramación de brochure de marca (hasta 10 slides; no incluye redacción de contenido)",
+            "Supervisión creativa de producción y adaptación de piezas",
+        ],
+        "plus": [
+            # Extras sobre Full
+            "Campaña de lanzamiento con hasta 15 piezas digitales",
+            "Kit de marca para implementación interna y externa",
+            "Acompañamiento en la ejecución de piezas y medios",
+        ],
+    },
+}
+
 # ============================================================================
 # NORMALIZACIÓN Y UTILIDADES BASE
 # ============================================================================

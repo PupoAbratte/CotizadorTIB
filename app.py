@@ -6,6 +6,7 @@
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from brief_parser import DELIVERABLES
 
 import streamlit as st
 import requests
@@ -27,6 +28,34 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# Helper: devuelve la lista de entregables acumulada según el nivel elegido
+# items_por_nivel: dict como {"lite": [...], "full": [...], "plus": [...]}
+# nivel_objetivo: "lite" | "full" | "plus"
+def expand_entregables_por_nivel(items_por_nivel: dict, nivel_objetivo: str):
+    orden = ["lite", "full", "plus"]
+    acumulados = []
+    for n in orden:
+        if n in items_por_nivel and items_por_nivel[n]:
+            acumulados.extend(items_por_nivel[n])
+        if n == nivel_objetivo:
+            break
+    # quita duplicados preservando orden
+    import re
+    def _canon(txt: str) -> str:
+        t = re.sub(r"\s*\([^)]*\)", "", txt)   # quita lo entre paréntesis
+        t = t.strip().rstrip(".")              # quita espacios y punto final
+        t = re.sub(r"\s+", " ", t)             # colapsa espacios
+        return t.lower()
+
+    vistos = set()
+    resultado = []
+    for e in acumulados:
+        k = _canon(e)
+        if k not in vistos:
+            resultado.append(e)
+            vistos.add(k)
+    return resultado
 
 @st.cache_resource(show_spinner=False)
 def _sheet_client():
@@ -140,97 +169,6 @@ except Exception as e:
 
 HERE = Path(__file__).parent
 CATALOG_PATH = HERE / "catalog.json"
-
-# ===== Entregables por módulo/nivel (taxonomía validada) =====
-DELIVERABLES = {
-    "A": {  # Research (descubrimiento)
-        "base": [
-            "Benchmark de competidores (visuales y verbales).",
-            "Identificación de códigos dominantes y tendencias.",
-            "Detección de espacios de oportunidad (gaps).",
-            "Detección de insights/hallazgos principales.",
-            "Mapeo de audiencia y mensaje clave por segmento.",
-            "Auditoría rápida de marca actual (narrativa, visual, activos).",
-        ]
-    },
-    "B": {  # Brand DNA (estrategia de marca)
-        "full": [
-            "Territorios de marca.",
-            "Verdades de marca.",
-            "Valores y principios.",
-            "Personalidad de marca.",
-            "Insight del consumidor.",
-            "Propósito de marca.",
-            "Concepto de marca.",
-            "Manifiesto de marca.",
-        ],
-        "lite": [
-            "Propósito de marca.",
-            "Territorios de marca (enfoque síntesis).",
-            "Personalidad de marca (rasgos clave y tono base).",
-            "Valores esenciales (3–5).",
-            "Concepto de marca (resumen accionable).",
-        ],
-    },
-    "C": {  # Creación (identidad principal)
-        "full": [
-            "Naming (si el brief lo indica).",
-            "Logotipo principal y variantes (si aplica).",
-            "Sistema cromático primario/secundario.",
-            "Sistema tipográfico.",
-            "Lenguaje visual (formas, tramas, íconos base, dirección fotográfica).",
-            "Tono de voz con do/don't y ejemplos por situación.",
-            "Mensajes clave.",
-            "Archivo maestro vectorial y exports básicos (SVG, PDF, PNG).",
-        ],
-        "rebranding": [
-            "Ajuste/optimización del logotipo existente (si aplica).",
-            "Refinamiento de sistema cromático y tipográfico.",
-            "Actualización del lenguaje visual (consistencia y vigencia).",
-            "Depuración de tono y mensajes clave.",
-            "Normalización de archivos y exports.",
-        ],
-        "refresh": [
-            "Ajustes menores de color/tipografía.",
-            "Consistencia básica en lenguaje visual.",
-            "Limpieza/orden de archivos y exports.",
-        ],
-    },
-    "D": {  # Brandbook (manual)
-        "full": [
-            "Uso del logo: clearspace, tamaños mínimos, fondos, incorrectos.",
-            "Paleta: usos, contrastes y accesibilidad básica.",
-            "Sistema tipográfico: escalas y combinaciones.",
-            "Composición: grillas y maquetado tipo.",
-            "Tratamiento fotográfico/ilustración.",
-            "Lenguaje verbal: tono y ejemplos por canal.",
-            "Aplicaciones de marca.",
-            "Paquete de archivos de soporte (plantillas según aplique).",
-        ],
-        "lite": [
-            "Logo, color y tipografía.",
-            "Grilla básica.",
-            "Dos piezas tipo.",
-            "Aplicaciones de marca.",
-        ],
-    },
-    "E": {  # Implementación (producción)
-        "lite": [
-            "Hasta 5 piezas derivadas simples.",
-            "Kit de RRSS (portadas/perfiles).",
-        ],
-        "full": [
-            "Hasta 10 piezas combinadas (digital + impresos livianos).",
-            "1 template de presentación (10–15 slides base).",
-            "Assets web básicos (favicon, OGs, estilos iniciales).",
-        ],
-        "plus": [
-            "Más de 10 aplicaciones.",
-            "Motion liviano (hasta 2 animaciones simples).",
-            "HTML banners simples.",
-        ],
-    },
-}
 
 # ===== Utilidades =====
 def money(x: float) -> str:
@@ -926,6 +864,55 @@ def render_quote_html(
         nivel = {1.0: "full", 0.8: "rebranding", 0.65: "lite", 0.6: "lite", 0.5: "refresh", 1.5: "plus"}.get(round(w,2), f"{w}×")
         breakdown.append({"modulo": k, "nombre": etiquetas.get(k, k), "nivel": nivel})
 
+    # Construir entregables expandidos por acción y nivel (solo para el PDF)
+        acciones_expand = []
+        for b in breakdown:
+            k = b.get("modulo")            # 'A'...'E'
+            nombre_accion = b.get("nombre")# etiqueta legible
+            nivel_bruto = str(b.get("nivel") or "").lower()
+
+            items_por_nivel = DELIVERABLES.get(k, {})
+
+            # Normalización de niveles por módulo (mapea variantes a 'lite'/'full'/'plus')
+            if nivel_bruto == "plus":
+                nivel_norm = "plus"
+            elif nivel_bruto in ("full", "rebranding") or ("×" in nivel_bruto):
+                nivel_norm = "full"
+            elif nivel_bruto in ("refresh",):
+                # refresh se aproxima a 'lite' en creación; en general lo tratamos como 'lite'
+                nivel_norm = "lite"
+            else:
+                nivel_norm = "lite"
+
+            # Research (A) usa niveles 'lite' y 'full' de la biblioteca (sin 'base')
+            if k == "A":
+                items_norm = {
+                    "lite": items_por_nivel.get("lite", []),
+                    "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
+                    "plus": items_por_nivel.get("plus", []),
+                }
+            elif k == "D":
+                # D = Brandbook NO acumulativo: usamos exactamente el nivel elegido
+                items_norm = {
+                    "lite": items_por_nivel.get("lite", []),
+                    "full": items_por_nivel.get("full", []),
+                    "plus": items_por_nivel.get("plus", []),
+                }
+            else:
+                items_norm = {
+                    "lite": items_por_nivel.get("lite", []),
+                    "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
+                    "plus": items_por_nivel.get("plus", []),
+                }
+            if k == "D":
+                # Brandbook: no acumulativo
+                entregables_expand = items_norm.get(nivel_norm, [])
+            else:
+                entregables_expand = expand_entregables_por_nivel(items_norm, nivel_norm)
+           
+            if entregables_expand:
+                acciones_expand.append({"accion": nombre_accion, "entregables": entregables_expand})
+
     env = Environment(
         loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
         autoescape=select_autoescape(["html", "xml"]),
@@ -952,6 +939,7 @@ def render_quote_html(
         "payment_terms": payment_terms,
         "validity_text": validity_text,
         "coefs": coefs or {},
+        "acciones_expand": acciones_expand,
     }
     return tpl.render(**context)
 
