@@ -19,6 +19,7 @@ import re
 import unicodedata
 import tempfile
 import os
+import tempfile
 
 import streamlit as st
 SHEET_ID = st.secrets["SHEET_ID"]
@@ -492,22 +493,27 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 </body>
 </html>"""
         
+        # Crear/asegurar un directorio controlado para assets temporales
+        tmp_dir = Path("tmp_assets")
+        tmp_dir.mkdir(exist_ok=True)
+        
         # --- Crear archivo temporal para el footer
         import tempfile
         import os
-        
+
         with tempfile.NamedTemporaryFile(
             mode='w', 
             suffix='.html', 
             delete=False, 
             encoding='utf-8'
+            dir=tmp_dir
         ) as tmp_footer:
             tmp_footer.write(footer_html_content)
             footer_path = tmp_footer.name
 
         try:
             # --- Configuración PDF con footer externo
-            footer_dir = os.path.dirname(footer_path)
+            footer_dir = str(tmp_dir.resolve())  
             footer_url = "file://" + footer_path
 
             # Opciones wkhtmltopdf
@@ -535,7 +541,11 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             st.write("🔍 DEBUG - PDF Options:")
             st.json(options)
             st.write(f"🔍 DEBUG - footer_url: {footer_url}")
-            st.write(f"🔍 DEBUG - footer_dir (allow): {footer_dir}")
+            st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
+            st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
+            if os.path.exists(footer_path):
+                st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
+            st.write(f"🔍 DEBUG - Footer dir resolved: {tmp_dir.resolve()}")  # [NUEVO]
 
             pdf_bytes = pdfkit.from_string(
                 body_html, False, configuration=_pdfkit_config(), options=options
