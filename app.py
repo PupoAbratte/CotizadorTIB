@@ -517,7 +517,8 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             # 1) Intentar modo remoto (HTTPS)
             remote_footer_url = (
                 os.getenv("BRAVO_REMOTE_FOOTER_URL")
-                or (st.secrets.get("BRAVO_REMOTE_FOOTER_URL") if hasattr(st, "secrets") else "")
+                or (st.secrets.get("BRAVO_REMOTE_FOOTER_URL", "") if hasattr(st, "secrets") else "")
+                or (st.secrets.get("general", {}).get("BRAVO_REMOTE_FOOTER_URL", "") if hasattr(st, "secrets") else "")
             )
             if remote_footer_url:
                 # Modo remoto: no necesitamos archivo local ni allow
@@ -570,7 +571,9 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 if os.path.exists(footer_path):
                     st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
                 st.write(f"🔍 DEBUG - Footer dir resolved: {footer_dir}")
-
+            st.write(f"🔍 DEBUG - env set: {bool(os.getenv('BRAVO_REMOTE_FOOTER_URL'))}")
+            st.write(f"🔍 DEBUG - secrets top-level: {('BRAVO_REMOTE_FOOTER_URL' in st.secrets) if hasattr(st, 'secrets') else False}")
+            st.write(f"🔍 DEBUG - secrets [general]: {('general' in st.secrets and 'BRAVO_REMOTE_FOOTER_URL' in st.secrets['general']) if hasattr(st, 'secrets') else False}")
 
             pdf_bytes = pdfkit.from_string(
                 body_html, False, configuration=_pdfkit_config(), options=options
