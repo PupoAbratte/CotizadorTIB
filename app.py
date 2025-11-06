@@ -507,6 +507,14 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
         try:
             # --- Configuración PDF con footer externo
+            footer_dir = os.path.dirname(footer_path)
+            footer_url = "file://" + footer_path
+
+            # Opciones wkhtmltopdf
+            # Claves del cambio:
+            # 1) usar file:// en footer-html
+            # 2) permitir el directorio del footer con --allow
+            # 3) quitar "quiet" para ver errores si algo falla
             options = {
                 "encoding": "UTF-8",
                 "page-size": "A4",
@@ -514,13 +522,20 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 "margin-right": "16mm",
                 "margin-bottom": "35mm",      # Espacio reservado para footer
                 "margin-left": "16mm",
-                "footer-html": footer_path,   # Archivo temporal con footer
+                "footer-html": footer_url,   # Ahora con file://
                 "footer-spacing": "3",        # Espacio entre contenido y footer
                 "enable-local-file-access": "",
                 "no-stop-slow-scripts": "",
                 "javascript-delay": "1000",   # Dar tiempo para cargar imágenes
-                "quiet": "",
+                "allow": footer_dir,         # ✅ permitir leer el dir del footer
+                # "quiet": "",
             }
+
+            # DEBUG: Mostrar opciones
+            st.write("🔍 DEBUG - PDF Options:")
+            st.json(options)
+            st.write(f"🔍 DEBUG - footer_url: {footer_url}")
+            st.write(f"🔍 DEBUG - footer_dir (allow): {footer_dir}")
 
             pdf_bytes = pdfkit.from_string(
                 body_html, False, configuration=_pdfkit_config(), options=options
