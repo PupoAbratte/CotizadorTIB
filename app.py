@@ -85,8 +85,20 @@ def test_sheets_connection() -> dict:
         "headers": headers,
     }
 
+def inject_font_and_base():
+    st.markdown("""
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
+inject_font_and_base()
 
 # --- Auth simple (usa .streamlit/secrets.toml [auth.users]) ---
 def require_login():
@@ -573,21 +585,6 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             }
             if used_footer_file and footer_dir:
                 options["allow"] = footer_dir
-
-            # 3) DEBUG mínimo (limpio y no redundante)
-            st.write("🔍 DEBUG - PDF Options:"); st.json(options)
-            st.write(f"🔍 DEBUG - footer_url: {footer_url}")
-            st.write(f"🔍 DEBUG - remote mode: {bool(remote_footer_url)}")
-            if used_footer_file:
-                st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
-                st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
-                if footer_path and os.path.exists(footer_path):
-                    st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
-                st.write(f"🔍 DEBUG - Footer dir resolved: {footer_dir}")
-            else:
-                st.write(f"🔍 DEBUG - env set: {bool(os.getenv('BRAVO_REMOTE_FOOTER_URL'))}")
-                st.write(f"🔍 DEBUG - secrets top-level: {('BRAVO_REMOTE_FOOTER_URL' in st.secrets) if hasattr(st, 'secrets') else False}")
-                st.write(f"🔍 DEBUG - secrets [general]: {('general' in st.secrets and 'BRAVO_REMOTE_FOOTER_URL' in st.secrets['general']) if hasattr(st, 'secrets') else False}")
 
             # 4) Generar PDF
             pdf_bytes = pdfkit.from_string(
