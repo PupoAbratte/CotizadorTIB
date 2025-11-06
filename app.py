@@ -622,8 +622,9 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             except Exception:
                 pass
 
-# ===== Tasa de cambio en vivo con fallbacks y cache =====
-@st.cache_data(ttl=3600, show_spinner=False)
+            # ===== Tasa de cambio en vivo con fallbacks y cache =====
+            @st.cache_data(ttl=3600, show_spinner=False)
+            
 def get_live_usd_to_cop() -> Optional[Tuple[float, str]]:
     """Devuelve (tasa, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None."""
     try:
