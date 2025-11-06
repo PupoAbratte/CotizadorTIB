@@ -505,7 +505,7 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             mode='w', 
             suffix='.html', 
             delete=False, 
-            encoding='utf-8'
+            encoding='utf-8',
             dir=tmp_dir
         ) as tmp_footer:
             tmp_footer.write(footer_html_content)
