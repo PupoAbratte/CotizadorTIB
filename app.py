@@ -512,50 +512,64 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             footer_path = tmp_footer.name
 
         try:
-            # --- Configuración PDF con footer externo
-            remote_footer_url = os.getenv("BRAVO_REMOTE_FOOTER_URL") or getattr(st.secrets, "BRAVO_REMOTE_FOOTER_URL", "")
-            if remote_footer_url:
-                footer_url = remote_footer_url
-                footer_dir = None            # no hace falta allow para https
-            else:
-                footer_dir = str(tmp_dir.resolve())
-                footer_dir = str(tmp_dir.resolve())
+            # --- Configuración PDF (definir SIEMPRE footer_url antes de options)
 
-            # Opciones wkhtmltopdf
-            # Claves del cambio:
-            # 1) usar file:// en footer-html
-            # 2) permitir el directorio del footer con --allow
-            # 3) quitar "quiet" para ver errores si algo falla
+            # 1) Intentar modo remoto (HTTPS)
+            remote_footer_url = (
+                os.getenv("BRAVO_REMOTE_FOOTER_URL")
+                or (st.secrets.get("BRAVO_REMOTE_FOOTER_URL") if hasattr(st, "secrets") else "")
+            )
+
+            if remote_footer_url:
+                # Modo remoto: no necesitamos archivo local ni allow
+                footer_url = remote_footer_url
+                footer_dir = None
+            else:
+                # Modo local: crear/asegurar directorio controlado y archivo temporal
+                tmp_dir = Path("tmp_assets")
+                tmp_dir.mkdir(exist_ok=True)
+
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=".html",
+                    delete=False,
+                    encoding="utf-8",
+                    dir=tmp_dir
+                ) as tmp_footer:
+                    tmp_footer.write(footer_html)
+                    footer_path = tmp_footer.name
+
+                footer_dir = str(tmp_dir.resolve())
+                footer_url = "file://" + footer_path
+
+            # 2) Construir options *después* de tener footer_url
             options = {
                 "encoding": "UTF-8",
                 "page-size": "A4",
                 "margin-top": "20mm",
                 "margin-right": "16mm",
-                "margin-bottom": "35mm",      # Espacio reservado para footer
+                "margin-bottom": "35mm",
                 "margin-left": "16mm",
-                "footer-html": footer_url,   # Ahora con file://
-                "footer-spacing": "3",        # Espacio entre contenido y footer
+                "footer-html": footer_url,
+                "footer-spacing": "5",
                 "enable-local-file-access": "",
-                "no-stop-slow-scripts": "",
-                "javascript-delay": "1000",   # Dar tiempo para cargar imágenes
-                # "quiet": "",
+                # "quiet": "",  # opcional, dejar comentado mientras diagnosticamos
             }
             if footer_dir:
                 options["allow"] = footer_dir
 
-            # DEBUG: Mostrar opciones
+            # 3) DEBUG (condicionado para no confundir)
             st.write("🔍 DEBUG - PDF Options:")
             st.json(options)
             st.write(f"🔍 DEBUG - footer_url: {footer_url}")
             st.write(f"🔍 DEBUG - remote mode: {bool(remote_footer_url)}")
-            
-            # Solo mostrar detalles del archivo si NO estamos en modo remoto
             if not remote_footer_url:
                 st.write(f"🔍 DEBUG - Footer path: `{footer_path}`")
                 st.write(f"🔍 DEBUG - Footer exists: {os.path.exists(footer_path)}")
                 if os.path.exists(footer_path):
                     st.write(f"🔍 DEBUG - Footer size: {os.path.getsize(footer_path)} bytes")
-                st.write(f"🔍 DEBUG - Footer dir resolved: {tmp_dir.resolve()}")
+                st.write(f"🔍 DEBUG - Footer dir resolved: {footer_dir}")
+
 
             pdf_bytes = pdfkit.from_string(
                 body_html, False, configuration=_pdfkit_config(), options=options
