@@ -595,7 +595,7 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
             # 4) Generar PDF
             pdf_bytes = pdfkit.from_string(
-                html,  # ⬅️ Usa el HTML principal (ajusta si tu var se llama distinto)
+                body_html,  # ⬅️ Usa el HTML principal (ajusta si tu var se llama distinto)
                 False,
                 configuration=_pdfkit_config(),
                 options=options
