@@ -555,6 +555,11 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 "footer-html": footer_url,
                 "footer-spacing": "5",
                 "enable-local-file-access": "",
+                "load-error-handling": "ignore",             # ✅ no abortar por warnings
+                "custom-header": [                           # ✅ UA “normal”
+                    ("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                                    "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"),
+                ],
                 # "quiet": "",  # opcional, dejar comentado mientras diagnosticamos
             }
             if footer_dir:
