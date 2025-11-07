@@ -427,6 +427,30 @@ def scen_from(catalog: Dict[str, Any], adjusted_usd: float) -> Dict[str, float]:
         "maximo": round(adjusted_usd * maximo, 2),
     }
 
+def expand_entregables_por_nivel(items_por_nivel: dict, nivel_objetivo: str):
+    orden = ["lite", "full", "plus"]
+    acumulados = []
+    for n in orden:
+        if n in items_por_nivel and items_por_nivel[n]:
+            acumulados.extend(items_por_nivel[n])
+        if n == nivel_objetivo:
+            break
+
+    def _canon(txt: str) -> str:
+        t = re.sub(r"\s*\([^)]*\)", "", txt)   # quita lo entre paréntesis
+        t = t.strip().rstrip(".")              # quita espacios y punto final
+        t = re.sub(r"\s+", " ", t)             # colapsa espacios
+        return t.lower()
+
+    vistos = set()
+    resultado = []
+    for e in acumulados:
+        k = _canon(e)
+        if k not in vistos:
+            resultado.append(e)
+            vistos.add(k)
+    return resultado
+
 def to_cop_local(rate: float, usd: float) -> int:
     try:
         r = float(rate)
