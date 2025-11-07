@@ -1,5 +1,7 @@
-# app.py — UI neutra accesible, Inter forzada, dark/light toggle
-# (solo cambios visuales + fixes menores no disruptivos)
+# app.py — UI + tema accesible (Inter, azul #2563EB), toggle dark/light 1-click
+# + Sin card destacada por defecto
+# + Caja de sesión neutra (sin verde)
+# + Fix PDF render (define body_html)
 
 import json
 from pathlib import Path
@@ -8,8 +10,8 @@ from brief_parser import DELIVERABLES
 
 import streamlit as st
 import requests
-from google.oauth2 import service_account
 import gspread
+from google.oauth2 import service_account
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pdfkit
@@ -19,6 +21,9 @@ import tempfile
 import os
 import shutil
 
+# ===== Config =====
+st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
+
 SHEET_ID = st.secrets["SHEET_ID"]
 WORKSHEET_NAME = st.secrets.get("WORKSHEET_NAME", "Quotes")
 
@@ -27,181 +32,315 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ===== Tipografía base =====
+# ------- Tipografía base (Inter) -------
 def inject_font_and_base():
-    st.markdown("""
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-      html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
-      }
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Forzar Inter global + fallbacks del sistema */
+html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton, .stRadio, .stDownloadButton {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+}
 
-# ===== Tema neutro claro / oscuro (UX/UI accesible) =====
+/* Ajustes de tipografía generales */
+h1, h2, h3, h4 { font-weight: 700 !important; }
+h1 { font-size: 2rem !important; }
+h2 { font-size: 1.5rem !important; }
+h3 { font-size: 1.25rem !important; }
+
+.block-container { 
+  padding-top: 1.5rem; 
+  padding-bottom: 2rem; 
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+# ------- Tema accesible (AA) con azul conservador #2563EB -------
 def inject_theme(mode: str = "dark"):
     """
-    Tema neutro claro/oscuro basado en patrones Material/Tailwind.
-    Mantiene Inter como tipografía global y alto contraste.
+    Tema con contraste AA, jerarquía clara y acento azul conservador.
+    Acento: #2563EB (hover #1D4ED8).
+    Radio global: 8px.
     """
 
     if mode == "dark":
         css_vars = """
-        :root{
-          --bg:#0B0F14;
-          --surface:#111827;
-          --surface-2:#0F172A;
-          --text:#E5E7EB;
-          --text-muted:#94A3B8;
-          --border:#1F2937;
-          --ring:#8B5CF6;
-          --accent:#6B4FC1;  /* botones y card primaria */
-          --radius:12px;
-          --shadow:0 1px 2px rgba(0,0,0,.35);
-          --shadow-lg:0 6px 18px rgba(0,0,0,.42);
-        }
-        """
+:root{
+  --bg:#0B0F14;
+  --surface:#111827;
+  --surface-2:#0F172A;
+  --surface-hover:#1F2937;
+
+  --text:#E5E7EB;
+  --text-secondary:#F3F4F6;
+  --text-muted:#A7B0BF;
+  --text-disabled:#8A93A3;
+
+  --border:#1F2937;
+  --border-strong:#2B3645;
+
+  --accent:#2563EB;
+  --accent-hover:#1D4ED8;
+  --ring:#60A5FA;
+
+  --radius:8px;
+
+  --shadow:0 4px 6px -1px rgba(0,0,0,.45), 0 2px 4px -2px rgba(0,0,0,.35);
+  --shadow-lg:0 10px 15px -3px rgba(0,0,0,.55), 0 4px 6px -4px rgba(0,0,0,.45);
+  --shadow-xl:0 20px 25px -5px rgba(0,0,0,.6), 0 8px 10px -6px rgba(0,0,0,.5);
+}
+"""
     else:
         css_vars = """
-        :root{
-          --bg:#FFFFFF;
-          --surface:#F7F7F8;
-          --surface-2:#F3F4F6; /* sidebar suave validado */
-          --text:#111827;
-          --text-muted:#6B7280;
-          --border:#E5E7EB;
-          --ring:#6366F1;
-          --accent:#6B4FC1;  /* botones y card primaria */
-          --radius:12px;
-          --shadow:0 1px 2px rgba(0,0,0,.06);
-          --shadow-lg:0 8px 24px rgba(17,24,39,.12);
-        }
-        """
+:root{
+  --bg:#FFFFFF;
+  --surface:#F8FAFC;
+  --surface-2:#EEF2F7;
+  --surface-hover:#E5EAF1;
+
+  --text:#111827;
+  --text-secondary:#0A0A0A;
+  --text-muted:#475569;
+  --text-disabled:#94A3B8;
+
+  --border:#D1D9E6;
+  --border-strong:#C0CADB;
+
+  --accent:#2563EB;
+  --accent-hover:#1D4ED8;
+  --ring:#3B82F6;
+
+  --radius:8px;
+
+  --shadow:0 1px 3px 0 rgba(0,0,0,.10), 0 1px 2px -1px rgba(0,0,0,.08);
+  --shadow-lg:0 10px 15px -3px rgba(0,0,0,.12), 0 4px 6px -4px rgba(0,0,0,.10);
+  --shadow-xl:0 20px 25px -5px rgba(0,0,0,.14), 0 8px 10px -6px rgba(0,0,0,.10);
+}
+"""
 
     st.markdown(
-        "<style>\n" + css_vars + """
-/* Fondo y texto global */
+        "<style>\n"
+        + css_vars
+        + """
+/* ===== BASE ===== */
 [data-testid="stAppViewContainer"]{
-  background:var(--bg); color:var(--text);
+  background:var(--bg); 
+  color:var(--text);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-/* Sidebar */
 [data-testid="stSidebar"]{
-  background:var(--surface-2); color:var(--text);
+  background:var(--surface-2); 
+  color:var(--text);
+  border-right:1px solid var(--border);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
-[data-testid="stSidebar"] *{ color:var(--text); }
 
-/* Controles */
+[data-testid="stSidebar"] *{
+  color:var(--text);
+}
+
+/* Botones (global) */
+.stButton>button, .stDownloadButton>button{
+  background:var(--accent) !important;
+  color:#FFFFFF !important;
+  border:1px solid var(--accent-hover) !important;
+  border-radius:var(--radius) !important;
+  font-weight:600 !important;
+  padding:0.6rem 1rem !important;
+  box-shadow:var(--shadow) !important;
+  transition:all 0.2s ease !important;
+}
+.stButton>button:hover, .stDownloadButton>button:hover{ 
+  background:var(--accent-hover) !important;
+  box-shadow:var(--shadow-lg) !important;
+  transform:translateY(-1px);
+}
+.stButton>button:active, .stDownloadButton>button:active{ 
+  transform:translateY(0);
+  box-shadow:var(--shadow) !important;
+}
+.stButton>button:focus, .stDownloadButton>button:focus{ 
+  outline:2px solid var(--ring) !important;
+  outline-offset:2px !important;
+}
+
+/* Botones del sidebar: forzar texto blanco */
+[data-testid="stSidebar"] .stButton>button, 
+[data-testid="stSidebar"] .stDownloadButton>button {
+  color:#FFFFFF !important;
+}
+
+/* Inputs */
 .stTextInput>div>div>input,
 .stTextArea textarea,
 .stSelectbox>div>div,
 .stNumberInput input{
-  background:var(--surface);
-  color:var(--text);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  box-shadow:none;
+  background:var(--surface) !important;
+  color:var(--text) !important;
+  border:1.5px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  box-shadow:var(--shadow) !important;
+  transition:border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.stSelectbox>div>div>div{ color:var(--text); }
-
-/* Placeholders e indicadores */
-::placeholder{ color:color-mix(in oklab, var(--text-muted) 70%, transparent); }
-
-/* Focus ring accesible */
+.stTextInput>div>div>input:hover,
+.stTextArea textarea:hover,
+.stSelectbox>div>div:hover,
+.stNumberInput input:hover{
+  border-color:var(--border-strong) !important;
+}
 .stTextInput>div>div>input:focus,
 .stTextArea textarea:focus,
 .stSelectbox [role="combobox"]:focus,
 .stNumberInput input:focus{
-  outline:2px solid var(--ring); outline-offset:1px;
+  border-color:var(--accent) !important;
+  outline:2px solid var(--ring) !important;
+  outline-offset:2px !important;
+  box-shadow:var(--shadow-lg) !important;
 }
 
-/* Botones */
-.stButton>button{
-  background:var(--accent);
-  color:#FFF;
-  border:none;
-  border-radius:var(--radius);
-  font-weight:600;
-  padding:0.55rem 0.9rem;
-  box-shadow:var(--shadow);
-  transition:transform .08s ease, filter .18s ease;
+/* Placeholder */
+::placeholder{ 
+  color:var(--text-disabled) !important;
+  opacity:1;
 }
-.stButton>button:hover{ filter:brightness(1.06); }
-.stButton>button:active{ transform:translateY(1px); }
-.stButton>button:focus{ outline:2px solid var(--ring); outline-offset:2px; }
 
-/* Radio horizontal */
-[role="radiogroup"]>div{ gap:.5rem; }
+/* Radio group */
+[role="radiogroup"]>div{ gap:0.75rem; }
+[role="radiogroup"] label{
+  background:var(--surface) !important;
+  border:1.5px solid var(--border) !important;
+  border-radius:var(--radius) !important;
+  padding:0.5rem 0.75rem !important;
+  transition:all 0.2s ease;
+}
+[role="radiogroup"] label:hover{
+  border-color:var(--border-strong) !important;
+  background:var(--surface-hover) !important;
+}
 
-/* Grid y tarjetas de resultado */
-.bravo-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin-top:8px; }
+/* BRAVO GRID/CARDS (neutras por defecto, sin .primary fija) */
+.bravo-grid{ 
+  display:grid; 
+  grid-template-columns:repeat(3,minmax(0,1fr)); 
+  gap:16px; 
+  margin-top:12px; 
+}
 @media (max-width:1100px){ .bravo-grid{ grid-template-columns:1fr; } }
 
 .bravo-card{
   background:var(--surface);
   border:1px solid var(--border);
   border-radius:var(--radius);
-  padding:16px;
+  padding:18px;
   color:var(--text);
   box-shadow:var(--shadow);
-  transition:transform .16s ease, box-shadow .2s ease;
+  transition:all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.bravo-card:hover{ transform:translateY(-2px); box-shadow:var(--shadow-lg); }
-
-.bravo-card.primary{
-  background:var(--accent);
-  color:#FFF;
-  border:1px solid transparent;
+.bravo-card:hover{ 
+  transform:translateY(-2px); 
   box-shadow:var(--shadow-lg);
+  border-color:var(--border-strong);
 }
 .bravo-card .label{
-  font-size:.85rem; color:var(--text-muted); margin-bottom:4px; letter-spacing:.2px;
+  font-size:0.85rem; 
+  color:var(--text-muted); 
+  margin-bottom:6px; 
+  letter-spacing:0.3px;
+  font-weight:500;
+  text-transform:uppercase;
 }
-.bravo-card.primary .label{ color:rgba(255,255,255,.9); }
-.bravo-card .value{ font-weight:700; font-size:1.6rem; line-height:1.2; }
-.bravo-card .sub{ font-size:.9rem; opacity:.9; margin-top:4px; }
+.bravo-card .value{ 
+  font-weight:700; 
+  font-size:1.75rem; 
+  line-height:1.2;
+  color:var(--text);
+}
+.bravo-card .sub{ 
+  font-size:0.9rem; 
+  opacity:0.9; 
+  margin-top:6px;
+  color:var(--text-secondary);
+}
 
-/* Meta arriba de cards */
+/* Meta info */
 .bravo-meta{
-  margin:8px 0 12px 0; padding:10px 12px;
-  background:var(--surface-2); color:var(--text);
-  border:1px solid var(--border); border-radius:var(--radius);
-  text-align:center; font-size:1rem; box-shadow:var(--shadow);
+  margin:10px 0 14px 0; 
+  padding:12px 14px;
+  background:var(--surface-2); 
+  color:var(--text-secondary);
+  border:1px solid var(--border-strong); 
+  border-radius:var(--radius);
+  text-align:center; 
+  font-size:1rem; 
+  font-weight:500;
+  box-shadow:var(--shadow);
 }
 
-/* Titulares y spacing */
-h1,h2,h3,h4{ color:var(--text); }
-.block-container{ padding-top:1.25rem; }
-        </style>
-        """,
-        unsafe_allow_html=True
+/* Caja de sesión neutra en sidebar */
+.session-box{
+  margin-top:8px;
+  padding:10px 12px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+}
+
+/* Dividers & alerts */
+hr{ border:none; border-top:1px solid var(--border); margin:1.5rem 0; }
+.stAlert{ border-radius:var(--radius) !important; border:1px solid var(--border) !important; }
+
+/* Scrollbar opcional */
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-track{ background:var(--surface-2); }
+::-webkit-scrollbar-thumb{ background:var(--border-strong); border-radius:5px; }
+::-webkit-scrollbar-thumb:hover{ background:var(--text-muted); }
+
+/* Transiciones razonables (evitar parpadeo) */
+*, *::before, *::after{
+  transition-property:background-color, border-color, color, fill, stroke;
+  transition-duration:0.25s;
+  transition-timing-function:ease;
+}
+.stButton>button, .bravo-card, input, textarea, select{
+  transition-property:all;
+  transition-duration:0.2s;
+}
+</style>
+""",
+        unsafe_allow_html=True,
     )
 
-# ===== Config =====
-st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
 inject_font_and_base()
 
 # --- Auth simple (usa .streamlit/secrets.toml [auth.users]) ---
 def require_login():
-    # Lee usuarios del secrets: [auth.users]
     users = dict(st.secrets.get("auth", {}).get("users", {}))
-
-    # Si no hay usuarios configurados, no bloquea (modo abierto)
     if not users:
         return True
 
-    # Si ya está autenticado, muestra estado y opción de logout
     if st.session_state.get("auth_ok"):
         with st.sidebar:
-            st.success(f"Sesión: {st.session_state.get('auth_email','')}")
-            if st.button("Cerrar sesión"):
+            st.markdown(
+                f"""
+<div class="session-box">
+  <div style="font-weight:600; margin-bottom:6px;">Sesión</div>
+  <div style="opacity:.9; margin-bottom:8px;">{st.session_state.get('auth_email','')}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            st.button("Cerrar sesión", key="logout_btn")
+            if st.session_state.get("logout_btn"):
                 for k in ("auth_ok", "auth_email"):
                     st.session_state.pop(k, None)
                 st.rerun()
         return True
 
-    # Formulario de acceso (bloquea la app hasta loguear)
     st.title("Accedé con tus credenciales")
     with st.form("login_form", clear_on_submit=False):
         email = st.text_input("Email", value="", key="auth_email_input")
@@ -216,10 +355,22 @@ def require_login():
         else:
             st.error("Credenciales inválidas. Probá de nuevo.")
 
-    st.stop()  # Detiene la ejecución hasta que se autentique
+    st.stop()
 
-# Llamar al guardia inmediatamente después de set_page_config
 require_login()
+
+# --- Estilos para tarjetas de resultado (estructura base; colores vienen del tema) ---
+st.markdown("""
+<style>
+.bravo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:12px;}
+@media (max-width:1100px){.bravo-grid{grid-template-columns:1fr;}}
+.bravo-card{border-radius:var(--radius);padding:18px;}
+.bravo-card .label{font-size:.85rem;margin-bottom:6px;letter-spacing:.3px;font-weight:500;text-transform:uppercase;}
+.bravo-card .value{font-weight:700;font-size:1.75rem;line-height:1.2;}
+.bravo-card .sub{font-size:.9rem;margin-top:6px;}
+.bravo-meta{margin:10px 0 14px 0;padding:12px 14px;border-radius:var(--radius);text-align:center;font-size:1rem;font-weight:500;}
+</style>
+""", unsafe_allow_html=True)
 
 # ---- Estado inicial ----
 if "last_quote" not in st.session_state:
@@ -247,7 +398,6 @@ def money(x: float) -> str:
     return f"{x:,.2f}"
 
 def load_catalog_safely() -> Dict[str, Any]:
-    """Carga el catálogo usando pricing.load_catalog si existe; si no, lee el JSON local."""
     if _pricing and hasattr(_pricing, "load_catalog") and callable(_pricing.load_catalog):
         try:
             return _pricing.load_catalog(str(CATALOG_PATH))
@@ -262,7 +412,6 @@ def load_catalog_safely() -> Dict[str, Any]:
         return json.load(fh)
 
 def scen_from(catalog: Dict[str, Any], adjusted_usd: float) -> Dict[str, float]:
-    """Usa pricing.to_scenarios si existe; si no, calcula con factores del catálogo."""
     if _pricing and hasattr(_pricing, "to_scenarios") and callable(_pricing.to_scenarios):
         try:
             return _pricing.to_scenarios(catalog, adjusted_usd)
@@ -279,14 +428,13 @@ def scen_from(catalog: Dict[str, Any], adjusted_usd: float) -> Dict[str, float]:
     }
 
 def to_cop_local(rate: float, usd: float) -> int:
-    """Convierte USD→COP usando la tasa provista (ya resuelta)."""
     try:
         r = float(rate)
     except Exception:
         r = 4300.0
     return int(round(usd * r, 0))
 
-# ===== Helpers de niveles → según pesos del parser =====
+# ===== Helpers de niveles =====
 def _nearly(x: float, target: float, tol: float = 0.05) -> bool:
     try:
         return abs(float(x) - float(target)) <= tol
@@ -294,7 +442,6 @@ def _nearly(x: float, target: float, tol: float = 0.05) -> bool:
         return False
 
 def _level_for(mod: str, weight: float) -> str:
-    """Devuelve la clave de nivel (full/lite/refresh/rebranding/base/plus) según módulo y peso."""
     if mod == "A":
         return "base"
     if mod == "B":
@@ -314,7 +461,6 @@ def _level_for(mod: str, weight: float) -> str:
     return "full"
 
 def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
-    """Crea la lista plana de entregables según módulos y niveles detectados."""
     if not isinstance(mod_weights, dict):
         return []
     orden = ["A", "B", "C", "D", "E"]
@@ -335,122 +481,74 @@ def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
                 seen.add(txt)
     return items
 
-# ======= Normalización por keywords (arreglo “siempre full”) =======
+# ===== Normalización por keywords =====
 def _normalize_txt(s: str) -> str:
     s = (s or "").lower()
     return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
 
 def infer_mod_weights_from_brief(brief: str) -> tuple[Dict[str, float], list]:
-    """
-    Heurística simple basada en keywords para forzar niveles cuando el parser
-    devuelve todo en 1.0 o no capta matices.
-    Devuelve (weights_overrides, reasons)
-    """
     t = _normalize_txt(brief)
     w: Dict[str, float] = {}
     reasons: list[str] = []
 
-    # ---- C (Creación) ----
     if any(k in t for k in ["refresh", "ajuste menor", "ajustes menores", "tweaks", "retocar", "ligero refresh", "refresh de identidad"]):
-        w["C"] = 0.5
-        reasons.append("C→refresh (0.5) por keywords de refresh/ajustes menores.")
+        w["C"] = 0.5; reasons.append("C→refresh (0.5) por keywords de refresh/ajustes menores.")
     elif any(k in t for k in ["rebranding", "restyling", "evolucion de marca", "evolución de marca", "ajuste de logo", "optimizar logo", "modernizar logo"]):
-        w["C"] = 0.8
-        reasons.append("C→rebranding (0.8) por keywords de rebranding/evolución/ajuste de logo.")
+        w["C"] = 0.8; reasons.append("C→rebranding (0.8) por keywords de rebranding/evolución/ajuste de logo.")
     elif any(k in t for k in ["desde cero", "identidad completa", "logo nuevo", "naming", "sistema tipografico", "sistema tipográfico", "lenguaje visual completo"]):
-        w["C"] = 1.0
-        reasons.append("C→full (1.0) por keywords de identidad completa/desde cero.")
+        w["C"] = 1.0; reasons.append("C→full (1.0) por keywords de identidad completa/desde cero.")
 
-    # ---- D (Brandbook) ----
     if any(k in t for k in ["manual basico", "manual básico", "lite", "guia rapida", "guía rápida", "mini manual"]):
-        w["D"] = 0.6
-        reasons.append("D→lite (0.6) por keywords de manual básico/lite.")
+        w["D"] = 0.6; reasons.append("D→lite (0.6) por keywords de manual básico/lite.")
     elif any(k in t for k in ["manual completo", "brandbook full", "manual full"]):
-        w["D"] = 1.0
-        reasons.append("D→full (1.0) por keywords de manual completo.")
+        w["D"] = 1.0; reasons.append("D→full (1.0) por keywords de manual completo.")
 
-    # ---- B (Brand DNA) ----
     if any(k in t for k in ["dna lite", "estrategia lite", "sintesis", "síntesis", "resumen", "enfoque sintesis", "enfoque síntesis"]):
-        w["B"] = 0.65
-        reasons.append("B→lite (0.65) por keywords de síntesis/lite.")
+        w["B"] = 0.65; reasons.append("B→lite (0.65) por keywords de síntesis/lite.")
     elif any(k in t for k in ["dna full", "estrategia completa", "territorios completos", "manifiesto"]):
-        w["B"] = 1.0
-        reasons.append("B→full (1.0) por keywords de estrategia completa/manifiesto.")
+        w["B"] = 1.0; reasons.append("B→full (1.0) por keywords de estrategia completa/manifiesto.")
 
-    # ---- E (Implementación) ----
     if any(k in t for k in ["mas de 10", "más de 10", "muchas aplicaciones", "motion", "banners html", "lote grande"]):
-        w["E"] = 1.5
-        reasons.append("E→plus (1.5) por keywords de volumen alto/motion/HTML.")
+        w["E"] = 1.5; reasons.append("E→plus (1.5) por keywords de volumen alto/motion/HTML.")
     elif any(k in t for k in ["hasta 10", "10 piezas", "template de presentacion", "template de presentación"]):
-        w["E"] = 1.0
-        reasons.append("E→full (1.0) por keywords de hasta 10 piezas/template.")
+        w["E"] = 1.0; reasons.append("E→full (1.0) por keywords de hasta 10 piezas/template.")
     elif any(k in t for k in ["hasta 5", "kit rrss", "kit redes", "piezas simples"]):
-        w["E"] = 0.6
-        reasons.append("E→lite (0.6) por keywords de bajo volumen/kit rrss.")
+        w["E"] = 0.6; reasons.append("E→lite (0.6) por keywords de bajo volumen/kit rrss.")
 
-    # ---- A (Research) ----
     if any(k in t for k in ["research", "benchmark", "descubrimiento", "auditoria", "auditoría"]):
-        w.setdefault("A", 1.0)  # si no lo trae el parser, activalo
-        reasons.append("A→base (1.0) por keywords de research/benchmark.")
+        w.setdefault("A", 1.0); reasons.append("A→base (1.0) por keywords de research/benchmark.")
 
     return w, reasons
 
 def merge_weights(parser_weights: Dict[str, float], inferred: Dict[str, float]) -> Dict[str, float]:
-    """
-    Reglas:
-    - Si inferred trae un valor NO-full (p.ej., 0.5/0.6/0.65/0.8/1.5), priorizar inferred.
-    - Si parser no trae módulo o trae 0 y hay inferred → usar inferred.
-    - Si parser marca 1.0 en todos y inferred trae ajustes → aplicar inferred.
-    """
     pw = dict(parser_weights or {})
     if not inferred:
         return pw
-
-    # ¿parser todo 1.0?
     parser_all_full = False
     if pw:
         vals = [float(v) for v in pw.values() if v is not None]
         parser_all_full = len(vals) > 0 and all(abs(v - 1.0) < 1e-6 for v in vals)
-
     for m, v in inferred.items():
         if m not in pw or not pw[m] or float(pw[m]) == 0.0:
-            pw[m] = v
-            continue
-        # Si el inferido no es 1.0, priorizarlo
+            pw[m] = v; continue
         if abs(v - 1.0) > 1e-6:
             pw[m] = v
         else:
-            # v == 1.0 → solo pisa si parser está vacío o todo full y keywords dicen full explícito
             if parser_all_full:
                 pw[m] = v
     return pw
 
 # === PDF / wkhtmltopdf helpers ===
 def _pdfkit_config():
-    """
-    Detecta wkhtmltopdf en:
-      1) var de entorno WKHTMLTOPDF_PATH (opcional)
-      2) lo que diga `which wkhtmltopdf` (shutil.which)
-      3) rutas comunes
-    Lanza error claro si no está.
-    """
-    # 1) Variable de entorno (opcional)
     env_path = os.environ.get("WKHTMLTOPDF_PATH")
     if env_path and os.path.exists(env_path):
         return pdfkit.configuration(wkhtmltopdf=env_path)
-
-    # 2) Búsqueda en PATH
     which_path = shutil.which("wkhtmltopdf")
     if which_path:
         return pdfkit.configuration(wkhtmltopdf=which_path)
-
-    # 3) Rutas comunes
-    common = ["/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"]
-    for p in common:
+    for p in ["/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"]:
         if os.path.exists(p):
             return pdfkit.configuration(wkhtmltopdf=p)
-
-    # 4) Mensaje claro si falta
     raise OSError(
         "wkhtmltopdf no está instalado en el entorno. "
         "En Streamlit Cloud, agregá un archivo 'packages.txt' con la línea 'wkhtmltopdf' "
@@ -464,10 +562,6 @@ def _safe_filename(s: str) -> str:
     return s or "cotizacion"
 
 def _build_quote_context_from_session(rate_display: float) -> dict:
-    """
-    Arma los kwargs para render_quote_html() usando lo que guardamos en session_state
-    y la opción elegida (Mínimo / Lógico / Máximo).
-    """
     q = st.session_state.get("last_quote") or {}
     choice = st.session_state.get("selected_quote_name") or "Lógico"
     amount = float(st.session_state.get("selected_quote_amount") or q.get("logico", 0.0))
@@ -491,12 +585,7 @@ def _build_quote_context_from_session(rate_display: float) -> dict:
         deliverables=_build_deliverables_from(q.get("mod_weights", q.get("modulos_pesos", {}))),
     )
 
-# === Helper unificado: guarda en Sheets + genera PDF (sin mensajes internos) ===
 def save_and_generate_pdf(rate_display: float) -> bool:
-    """
-    Guarda la fila en Google Sheets y genera el PDF en memoria.
-    Footer repetido en cada página usando archivo temporal optimizado para wkhtmltopdf.
-    """
     try:
         q = st.session_state.get("last_quote") or {}
         if not q:
@@ -511,65 +600,53 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         if not ok:
             return False
 
-        # --- Contexto
+        # Contexto + HTML principal del PDF
         ctx = _build_quote_context_from_session(rate_display)
-
-        # --- Render principal del PDF (fix: definimos body_html aquí)
         body_html = render_quote_html(**ctx)
 
-        # --- Footer local temporal
-        tmp_dir = Path("tmp_assets")
-        tmp_dir.mkdir(exist_ok=True)
-        footer_html = render_quote_footer_html(**ctx)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".html",
-            delete=False,
-            encoding="utf-8",
-            dir=tmp_dir
-        ) as tmp_footer:
+        # Footer local temporal
+        tmp_dir = Path("tmp_assets"); tmp_dir.mkdir(exist_ok=True)
+        footer_html = render_quote_footer_html(
+            estudio_nombre=ctx.get("estudio_nombre", "This is Bravo"),
+            estudio_web=ctx.get("estudio_web", "www.thisisbravo.co"),
+            estudio_mail=ctx.get("estudio_mail", "hola@thisisbravo.co"),
+        )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8", dir=tmp_dir) as tmp_footer:
             tmp_footer.write(footer_html)
             footer_path = tmp_footer.name
+        footer_url = "file://" + footer_path
 
+        options = {
+            "encoding": "UTF-8",
+            "page-size": "A4",
+            "margin-top": "20mm",
+            "margin-right": "16mm",
+            "margin-bottom": "35mm",
+            "margin-left": "16mm",
+            "footer-html": footer_url,
+            "footer-spacing": "5",
+            "enable-local-file-access": "",
+            "load-error-handling": "ignore",
+            "custom-header": [("User-Agent","Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36")],
+        }
+        options["allow"] = str(tmp_dir.resolve())
+
+        pdf_bytes = pdfkit.from_string(
+            body_html,
+            False,
+            configuration=_pdfkit_config(),
+            options=options
+        )
+
+        st.session_state["last_pdf_bytes"] = pdf_bytes
+        fecha = datetime.now().strftime("%Y%m%d")
+        cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
+        st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
         try:
-            options = {
-                "encoding": "UTF-8",
-                "page-size": "A4",
-                "margin-top": "20mm",
-                "margin-right": "16mm",
-                "margin-bottom": "35mm",
-                "margin-left": "16mm",
-                "footer-html": "file://" + footer_path,
-                "footer-spacing": "5",
-                "enable-local-file-access": "",
-                "load-error-handling": "ignore",
-                "custom-header": [
-                    ("User-Agent",
-                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                     "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"),
-                ],
-            }
-            options["allow"] = str(tmp_dir.resolve())
-
-            pdf_bytes = pdfkit.from_string(
-                body_html,
-                False,
-                configuration=_pdfkit_config(),
-                options=options
-            )
-
-            st.session_state["last_pdf_bytes"] = pdf_bytes
-            fecha = datetime.now().strftime("%Y%m%d")
-            cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
-            st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
-            return True
-
-        finally:
-            try:
-                if footer_path and os.path.exists(footer_path):
-                    os.unlink(footer_path)
-            except Exception:
-                pass
+            if os.path.exists(footer_path): os.unlink(footer_path)
+        except Exception:
+            pass
+        return True
 
     except Exception as e:
         st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
@@ -579,7 +656,6 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_usd_to_cop() -> Optional[Tuple[float, str]]:
-    """Devuelve (tasa, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None."""
     try:
         resp = requests.get(
             "https://api.exchangerate.host/latest",
@@ -612,7 +688,6 @@ def save_quote_to_sheets(
     stakeholders: str, relacion: str, brief: str,
     base_usd: float, adjusted_usd: float, minimo: float, logico: float, maximo: float
 ) -> bool:
-    """Escribe una fila en la hoja indicada por WORKSHEET_NAME dentro del Sheet SHEET_ID."""
     try:
         gc, _ = _sheet_client()
         sh = gc.open_by_key(SHEET_ID)
@@ -689,8 +764,27 @@ def save_quote_to_sheets(
         st.exception(e)
     return False
 
+@st.cache_resource(show_spinner=False)
+def _sheet_client():
+    creds_info = dict(st.secrets["gcp_service_account"])
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
+    gc = gspread.authorize(creds)
+    return gc, creds.service_account_email
+
+def test_sheets_connection() -> dict:
+    gc, sa_email = _sheet_client()
+    sh = gc.open_by_key(SHEET_ID)
+    ws = sh.worksheet(WORKSHEET_NAME)
+    headers = ws.row_values(1)
+    return {"service_account": sa_email, "title": sh.title, "worksheet": ws.title, "headers": headers}
+
 def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
-    """Intenta usar pricing.compute_quote(catalog, features). Si falla, fallback básico."""
     if _pricing and hasattr(_pricing, "compute_quote") and callable(_pricing.compute_quote):
         try:
             return _pricing.compute_quote(catalog, features)
@@ -712,12 +806,10 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
         s = str(s).strip().lower()
         return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     def keymatch(d: dict, key: str, default=1.0):
-        if not isinstance(d, dict):
-            return default
+        if not isinstance(d, dict): return default
         key_n = _normalize(key)
         for k, v in d.items():
-            if _normalize(k) == key_n:
-                return v
+            if _normalize(k) == key_n: return v
         return d.get(key, default)
 
     C = catalog.get("coeficientes", {})
@@ -734,12 +826,9 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
     stks = features.get("stakeholders", "uno")
     st_map = C.get("stakeholders", {})
     if isinstance(stks, int):
-        if stks <= 1:
-            c_st = 1.0
-        elif stks == 2:
-            c_st = float(keymatch(st_map, "dos", 1.04))
-        else:
-            c_st = float(keymatch(st_map, "tres_o_mas", 1.08))
+        if stks <= 1: c_st = 1.0
+        elif stks == 2: c_st = float(keymatch(st_map, "dos", 1.04))
+        else: c_st = float(keymatch(st_map, "tres_o_mas", 1.08))
     else:
         c_st = float(keymatch(st_map, stks, 1.0))
 
@@ -776,12 +865,10 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
 
 # ---------- Render helpers ----------
 def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_display):
-    """Muestra Tarifa base ARRIBA y luego las tres tarjetas."""
     st.markdown(
         f"<div class='bravo-meta'><b>Tarifa base: US$</b> {base_usd:,.2f}</div>",
         unsafe_allow_html=True
     )
-
     usd_min = f"USD {minimo:,.2f}"
     usd_log = f"USD {logico:,.2f}"
     usd_max = f"USD {maximo:,.2f}"
@@ -789,28 +876,31 @@ def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_dis
     cop_log = f"~ COP {to_cop_local(rate_display, logico):,}"
     cop_max = f"~ COP {to_cop_local(rate_display, maximo):,}"
 
-    st.markdown(f"""
-    <div class="bravo-grid">
-      <div class="bravo-card" aria-label="Precio mínimo">
-        <div class="label">Mínimo</div>
-        <div class="value">{usd_min}</div>
-        <div class="sub">{cop_min}</div>
-      </div>
-      <div class="bravo-card primary" aria-label="Precio lógico">
-        <div class="label">Lógico</div>
-        <div class="value">{usd_log}</div>
-        <div class="sub">{cop_log}</div>
-      </div>
-      <div class="bravo-card" aria-label="Precio máximo">
-        <div class="label">Máximo</div>
-        <div class="value">{usd_max}</div>
-        <div class="sub">{cop_max}</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # NOTA: sin .primary fija — las 3 cards quedan neutras
+    st.markdown(
+        f"""
+<div class="bravo-grid">
+  <div class="bravo-card" aria-label="Precio mínimo">
+    <div class="label">Mínimo</div>
+    <div class="value">{usd_min}</div>
+    <div class="sub">{cop_min}</div>
+  </div>
+  <div class="bravo-card" aria-label="Precio lógico">
+    <div class="label">Lógico</div>
+    <div class="value">{usd_log}</div>
+    <div class="sub">{cop_log}</div>
+  </div>
+  <div class="bravo-card" aria-label="Precio máximo">
+    <div class="label">Máximo</div>
+    <div class="value">{usd_max}</div>
+    <div class="sub">{cop_max}</div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 def render_catalog_summary(catalog: Dict[str, Any]):
-    """Resumen de precios base; soporta esquemas 'precios' o 'modulos'."""
     st.subheader("Catálogo (resumen)")
     P = catalog.get("precios")
     if isinstance(P, dict) and P:
@@ -861,7 +951,6 @@ def render_quote_html(
     payment_terms: str = "50% al inicio del proyecto. 50% restante contra entrega de los materiales.",
     validity_text: str = "Esta propuesta tiene una validez de 30 días a partir de la fecha de emisión.",
 ) -> str:
-    """Renderiza templates/quote.html y devuelve el HTML final."""
     _meses_titulo = [
         "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
         "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
@@ -892,51 +981,49 @@ def render_quote_html(
         nivel = {1.0: "full", 0.8: "rebranding", 0.65: "lite", 0.6: "lite", 0.5: "refresh", 1.5: "plus"}.get(round(w,2), f"{w}×")
         breakdown.append({"modulo": k, "nombre": etiquetas.get(k, k), "nivel": nivel})
 
-    # Construir entregables expandidos por acción y nivel (solo para el PDF)
-        acciones_expand = []
-        for b in breakdown:
-            k = b.get("modulo")            # 'A'...'E'
-            nombre_accion = b.get("nombre")# etiqueta legible
-            nivel_bruto = str(b.get("nivel") or "").lower()
+    # Entregables expandidos por acción y nivel
+    acciones_expand = []
+    for b in breakdown:
+        k = b.get("modulo")
+        nombre_accion = b.get("nombre")
+        nivel_bruto = str(b.get("nivel") or "").lower()
+        items_por_nivel = DELIVERABLES.get(k, {})
 
-            items_por_nivel = DELIVERABLES.get(k, {})
+        if nivel_bruto == "plus":
+            nivel_norm = "plus"
+        elif nivel_bruto in ("full", "rebranding") or ("×" in nivel_bruto):
+            nivel_norm = "full"
+        elif nivel_bruto in ("refresh",):
+            nivel_norm = "lite"
+        else:
+            nivel_norm = "lite"
 
-            # Normalización de niveles por módulo
-            if nivel_bruto == "plus":
-                nivel_norm = "plus"
-            elif nivel_bruto in ("full", "rebranding") or ("×" in nivel_bruto):
-                nivel_norm = "full"
-            elif nivel_bruto in ("refresh",):
-                nivel_norm = "lite"
-            else:
-                nivel_norm = "lite"
+        if k == "A":
+            items_norm = {
+                "lite": items_por_nivel.get("lite", []),
+                "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
+                "plus": items_por_nivel.get("plus", []),
+            }
+        elif k == "D":
+            items_norm = {
+                "lite": items_por_nivel.get("lite", []),
+                "full": items_por_nivel.get("full", []),
+                "plus": items_por_nivel.get("plus", []),
+            }
+        else:
+            items_norm = {
+                "lite": items_por_nivel.get("lite", []),
+                "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
+                "plus": items_por_nivel.get("plus", []),
+            }
 
-            # A (Research) y D (Brandbook) reglas
-            if k == "A":
-                items_norm = {
-                    "lite": items_por_nivel.get("lite", []),
-                    "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
-                    "plus": items_por_nivel.get("plus", []),
-                }
-            elif k == "D":
-                items_norm = {
-                    "lite": items_por_nivel.get("lite", []),
-                    "full": items_por_nivel.get("full", []),
-                    "plus": items_por_nivel.get("plus", []),
-                }
-            else:
-                items_norm = {
-                    "lite": items_por_nivel.get("lite", []),
-                    "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
-                    "plus": items_por_nivel.get("plus", []),
-                }
-            if k == "D":
-                entregables_expand = items_norm.get(nivel_norm, [])
-            else:
-                entregables_expand = expand_entregables_por_nivel(items_norm, nivel_norm)
-           
-            if entregables_expand:
-                acciones_expand.append({"accion": nombre_accion, "entregables": entregables_expand})
+        if k == "D":
+            entregables_expand = items_norm.get(nivel_norm, [])
+        else:
+            entregables_expand = expand_entregables_por_nivel(items_norm, nivel_norm)
+
+        if entregables_expand:
+            acciones_expand.append({"accion": nombre_accion, "entregables": entregables_expand})
 
     env = Environment(
         loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
@@ -977,7 +1064,6 @@ def render_quote_footer_html(
     studio_logo_url: str = "https://thisisbravo.co/wp-content/uploads/2025/11/logo-2.png",
     **kwargs
 ) -> str:
-    """Renderiza templates/quote_footer.html y devuelve el HTML final."""
     env = Environment(
         loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
         autoescape=select_autoescape(["html", "xml"]),
@@ -985,7 +1071,6 @@ def render_quote_footer_html(
         lstrip_blocks=True,
     )
     tpl = env.get_template("quote_footer.html")
-    
     context = {
         "studio_name": estudio_nombre,
         "studio_site": estudio_web,
@@ -1004,11 +1089,12 @@ if live:
 else:
     rate_display, rate_source = catalog_rate, "catálogo (fallback)"
 
-st.sidebar.header("Tasa de cambio")
-st.sidebar.caption(
-    f"**{money(rate_display)} COP / USD**  \n"
-    f"_Fuente: {rate_source} · Actualizado: {datetime.now().strftime('%d-%m-%Y / %H:%M')}_"
-)
+with st.sidebar:
+    st.header("Tasa de cambio")
+    st.caption(
+        f"**{money(rate_display)} COP / USD**  \n"
+        f"_Fuente: {rate_source} · Actualizado: {datetime.now().strftime('%d-%m-%Y / %H:%M')}_"
+    )
 
 # ===== UI principal =====
 st.title("Cotizador — This is Bravo")
@@ -1094,22 +1180,22 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Falló la conexión: {type(e).__name__}: {e}")
 
-    if st.sidebar.button("Reset"):
-        for k in ["last_quote","selected_quote_name","selected_quote_amount",
-                "last_pdf_bytes","last_pdf_name"]:
+    if st.button("Reset"):
+        for k in ["last_quote","selected_quote_name","selected_quote_amount","last_pdf_bytes","last_pdf_name"]:
             st.session_state.pop(k, None)
         st.rerun()
-    
-    # --- Toggle modo claro / oscuro ---
-    st.sidebar.divider()
+
+    st.divider()
+    # Default dark una sola vez
     if "theme_mode" not in st.session_state:
         st.session_state["theme_mode"] = "dark"
+    if "theme_dark" not in st.session_state:
+        st.session_state["theme_dark"] = True  # inicia en dark
 
-    dark_default = st.session_state["theme_mode"] == "dark"
-    use_dark = st.sidebar.toggle("Modo oscuro", value=dark_default)
-    st.session_state["theme_mode"] = "dark" if use_dark else "light"
+    st.toggle("Modo oscuro", key="theme_dark")
+    st.session_state["theme_mode"] = "dark" if st.session_state["theme_dark"] else "light"
 
-# Inyectar el tema elegido (fuera del with st.sidebar)
+# Inyectar tema elegido (1 clic)
 inject_theme(st.session_state["theme_mode"])
 
 # --- Contenedores en el orden que queremos ---
@@ -1117,32 +1203,6 @@ result_section = st.container()
 save_section = st.container()
 checks_section = st.container()
 
-@st.cache_resource(show_spinner=False)
-def _sheet_client():
-    creds_info = dict(st.secrets["gcp_service_account"])
-    creds = service_account.Credentials.from_service_account_info(
-        creds_info,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    gc = gspread.authorize(creds)
-    return gc, creds.service_account_email
-
-def test_sheets_connection() -> dict:
-    gc, sa_email = _sheet_client()
-    sh = gc.open_by_key(SHEET_ID)
-    ws = sh.worksheet(WORKSHEET_NAME)
-    headers = ws.row_values(1)
-    return {
-        "service_account": sa_email,
-        "title": sh.title,
-        "worksheet": ws.title,
-        "headers": headers,
-    }
-
-# --- Helper para renderizar Comprobaciones en ambos flujos ---
 def render_checks(q: Dict[str, Any]):
     with checks_section:
         st.subheader("Comprobaciones")
@@ -1167,7 +1227,6 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
     st.subheader("Resultado")
     render_result_cards(q["minimo"], q["logico"], q["maximo"], q["base_usd"], q["adjusted_usd"], rate_display)
 
-    # --- Form para selección + guardar (misma key SIEMPRE) ---
     with st.form("quote_actions"):
         st.markdown("#### Elegí una opción")
         opciones = {"Mínimo": q["minimo"], "Lógico": q["logico"], "Máximo": q["maximo"]}
@@ -1185,7 +1244,6 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
 
         submit = st.form_submit_button("Guardar cotización", use_container_width=True)
 
-    # Persistimos la selección fuera del form
     st.session_state["selected_quote_name"] = choice
     st.session_state["selected_quote_amount"] = float(opciones[choice])
     st.caption(f"Opción elegida: **{choice}** — **USD {opciones[choice]:,.2f}**")
@@ -1206,23 +1264,35 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
         )
 
 # ------ Lógica principal ------
+if left_col and right_col:  # solo para mantener orden mental; no es condición real
+    pass
+
+if 'calcular' not in st.session_state:
+    st.session_state['calcular'] = False
+
+if calcular:
+    st.session_state['calcular'] = True
+
+if st.session_state['calcular']:
+    if not st.session_state.get("last_run_with_brief"):
+        # usamos el brief del input actual
+        current_brief = st.session_state.get("brief_text", brief)
+    else:
+        current_brief = st.session_state.get("brief_text", "")
+
 if calcular:
     if not brief.strip():
         st.warning("Escribí un brief para continuar.")
     else:
-        # limpiar PDF previo al recalcular
         st.session_state.pop("last_pdf_bytes", None)
         st.session_state.pop("last_pdf_name", None)
 
-        # 1) Parse → módulos
         parsed = detect_module_weights(brief)
         mod_weights = parsed.get("modulos_pesos", {}) or {}
 
-        # 1.1) Inferencia por keywords y merge
         inferred, reasons_kw = infer_mod_weights_from_brief(brief)
         mod_weights = merge_weights(mod_weights, inferred)
 
-        # 2) Features desde los selectores
         features = {
             "modulos_pesos": mod_weights,
             "cliente_tipo": cliente_tipo,
@@ -1233,19 +1303,16 @@ if calcular:
             "relacion": relacion
         }
 
-        # 3) Calcular
         result = safe_compute_quote(catalog, features)
         base_usd = float(result.get("base_usd", 0.0))
         adjusted_usd = float(result.get("adjusted_usd", 0.0))
         coefs = result.get("coefs", {})
         scenarios = result.get("scenarios", {})
 
-        # 4) Persistir en estado
         minimo = scenarios.get("min") or scenarios.get("minimo") or 0.0
         logico = scenarios.get("logic") or scenarios.get("logico") or adjusted_usd
         maximo = scenarios.get("max") or scenarios.get("maximo") or 0.0
 
-        # reasons: parser + keywords
         reasons_parsed = parsed.get("reasons", []) or []
         reasons = reasons_parsed + reasons_kw
 
@@ -1267,7 +1334,6 @@ if calcular:
             "coefs": coefs,
             "reasons": reasons,
         }
-        # default selección
         st.session_state["selected_quote_name"] = st.session_state.get("selected_quote_name", "Lógico")
         st.session_state["selected_quote_amount"] = {
             "Mínimo": minimo, "Lógico": logico, "Máximo": maximo
@@ -1276,24 +1342,17 @@ if calcular:
         hint_box.empty()
         st.divider()
 
-        # === RESULTADO + RADIO + BOTÓN UNIFICADO ===
         q = st.session_state["last_quote"]
         with result_section:
-            render_result_ui(st.session_state["last_quote"], rate_display)
-
-        # === COMPROBACIONES (siempre visibles en este flujo) ===
+            render_result_ui(q, rate_display)
         render_checks(q)
 
-# === Render persistente cuando NO se está calculando pero hay datos previos ===
 elif st.session_state.get("last_quote"):
     q = st.session_state["last_quote"]
     with result_section:
-        render_result_ui(st.session_state["last_quote"], rate_display)
-
-    # === COMPROBACIONES (ahora también en flujo persistente) ===
+        render_result_ui(q, rate_display)
     render_checks(q)
 
-# === (2) GUARDAR — sección legacy (placeholder visual) ===
 with save_section:
     pass
 
