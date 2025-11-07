@@ -126,7 +126,9 @@ KW_B_LITE_HINTS = [
     "adn lite", "estrategia basica", "adn basico",
     "proposito y personalidad", "manifiesto simple",
     "resumen accionable", "sintesis", "enfoque sintesis",
-    "estrategia rapida", "proposito basico"
+    "estrategia rapida", "proposito basico", "brand dna simple",
+    "adn de marca simple", "adn de marca sencillo",
+    "brand dna sencillo", "adn de marca sencillo", "brand dna basico"
 ]
 
 # Umbrales de decisión
