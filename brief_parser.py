@@ -159,6 +159,7 @@ KW_B_LITE_HINTS = [
     "proposito y personalidad", "manifiesto simple",
     "resumen accionable", "sintesis", "enfoque sintesis",
     "estrategia rapida", "adn de marca basico", "brand dna basico",
+    "propósito básico", "adn de marca simple", "brand dna simple",
 ]
 
 # C: Creación — refresh (0.5) / rebranding (0.8) / full (1.0)
