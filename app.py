@@ -1,7 +1,5 @@
-# app.py — UI única / tarifa base arriba / botón unificado (Sheets + PDF) / 1 solo mensaje
-# + Comprobaciones persistentes (se muestran tanto tras calcular como al cambiar la opción)
-# + Footer externo (quote_footer.html) y Header embebido en quote.html
-# + Normalizador de niveles por keywords de brief (arregla “siempre full”)
+# app.py — UI neutra accesible, Inter forzada, dark/light toggle
+# (solo cambios visuales + fixes menores no disruptivos)
 
 import json
 from pathlib import Path
@@ -10,8 +8,8 @@ from brief_parser import DELIVERABLES
 
 import streamlit as st
 import requests
-import gspread
 from google.oauth2 import service_account
+import gspread
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pdfkit
@@ -19,9 +17,8 @@ import re
 import unicodedata
 import tempfile
 import os
-import tempfile
+import shutil
 
-import streamlit as st
 SHEET_ID = st.secrets["SHEET_ID"]
 WORKSHEET_NAME = st.secrets.get("WORKSHEET_NAME", "Quotes")
 
@@ -30,71 +27,156 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# Helper: devuelve la lista de entregables acumulada según el nivel elegido
-# items_por_nivel: dict como {"lite": [...], "full": [...], "plus": [...]}
-# nivel_objetivo: "lite" | "full" | "plus"
-def expand_entregables_por_nivel(items_por_nivel: dict, nivel_objetivo: str):
-    orden = ["lite", "full", "plus"]
-    acumulados = []
-    for n in orden:
-        if n in items_por_nivel and items_por_nivel[n]:
-            acumulados.extend(items_por_nivel[n])
-        if n == nivel_objetivo:
-            break
-    # quita duplicados preservando orden
-    import re
-    def _canon(txt: str) -> str:
-        t = re.sub(r"\s*\([^)]*\)", "", txt)   # quita lo entre paréntesis
-        t = t.strip().rstrip(".")              # quita espacios y punto final
-        t = re.sub(r"\s+", " ", t)             # colapsa espacios
-        return t.lower()
-
-    vistos = set()
-    resultado = []
-    for e in acumulados:
-        k = _canon(e)
-        if k not in vistos:
-            resultado.append(e)
-            vistos.add(k)
-    return resultado
-
-@st.cache_resource(show_spinner=False)
-def _sheet_client():
-    from google.oauth2 import service_account
-    import gspread
-    creds_info = dict(st.secrets["gcp_service_account"])
-    creds = service_account.Credentials.from_service_account_info(
-        creds_info,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    gc = gspread.authorize(creds)
-    return gc, creds.service_account_email
-
-def test_sheets_connection() -> dict:
-    gc, sa_email = _sheet_client()
-    sh = gc.open_by_key(SHEET_ID)
-    ws = sh.worksheet(WORKSHEET_NAME)
-    headers = ws.row_values(1)
-    return {
-        "service_account": sa_email,
-        "title": sh.title,
-        "worksheet": ws.title,
-        "headers": headers,
-    }
-
+# ===== Tipografía base =====
 def inject_font_and_base():
     st.markdown("""
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-      body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton {
+      html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
       }
     </style>
     """, unsafe_allow_html=True)
+
+# ===== Tema neutro claro / oscuro (UX/UI accesible) =====
+def inject_theme(mode: str = "dark"):
+    """
+    Tema neutro claro/oscuro basado en patrones Material/Tailwind.
+    Mantiene Inter como tipografía global y alto contraste.
+    """
+
+    if mode == "dark":
+        css_vars = """
+        :root{
+          --bg:#0B0F14;
+          --surface:#111827;
+          --surface-2:#0F172A;
+          --text:#E5E7EB;
+          --text-muted:#94A3B8;
+          --border:#1F2937;
+          --ring:#8B5CF6;
+          --accent:#6B4FC1;  /* botones y card primaria */
+          --radius:12px;
+          --shadow:0 1px 2px rgba(0,0,0,.35);
+          --shadow-lg:0 6px 18px rgba(0,0,0,.42);
+        }
+        """
+    else:
+        css_vars = """
+        :root{
+          --bg:#FFFFFF;
+          --surface:#F7F7F8;
+          --surface-2:#F3F4F6; /* sidebar suave validado */
+          --text:#111827;
+          --text-muted:#6B7280;
+          --border:#E5E7EB;
+          --ring:#6366F1;
+          --accent:#6B4FC1;  /* botones y card primaria */
+          --radius:12px;
+          --shadow:0 1px 2px rgba(0,0,0,.06);
+          --shadow-lg:0 8px 24px rgba(17,24,39,.12);
+        }
+        """
+
+    st.markdown(
+        "<style>\n" + css_vars + """
+/* Fondo y texto global */
+[data-testid="stAppViewContainer"]{
+  background:var(--bg); color:var(--text);
+}
+
+/* Sidebar */
+[data-testid="stSidebar"]{
+  background:var(--surface-2); color:var(--text);
+}
+[data-testid="stSidebar"] *{ color:var(--text); }
+
+/* Controles */
+.stTextInput>div>div>input,
+.stTextArea textarea,
+.stSelectbox>div>div,
+.stNumberInput input{
+  background:var(--surface);
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:none;
+}
+.stSelectbox>div>div>div{ color:var(--text); }
+
+/* Placeholders e indicadores */
+::placeholder{ color:color-mix(in oklab, var(--text-muted) 70%, transparent); }
+
+/* Focus ring accesible */
+.stTextInput>div>div>input:focus,
+.stTextArea textarea:focus,
+.stSelectbox [role="combobox"]:focus,
+.stNumberInput input:focus{
+  outline:2px solid var(--ring); outline-offset:1px;
+}
+
+/* Botones */
+.stButton>button{
+  background:var(--accent);
+  color:#FFF;
+  border:none;
+  border-radius:var(--radius);
+  font-weight:600;
+  padding:0.55rem 0.9rem;
+  box-shadow:var(--shadow);
+  transition:transform .08s ease, filter .18s ease;
+}
+.stButton>button:hover{ filter:brightness(1.06); }
+.stButton>button:active{ transform:translateY(1px); }
+.stButton>button:focus{ outline:2px solid var(--ring); outline-offset:2px; }
+
+/* Radio horizontal */
+[role="radiogroup"]>div{ gap:.5rem; }
+
+/* Grid y tarjetas de resultado */
+.bravo-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin-top:8px; }
+@media (max-width:1100px){ .bravo-grid{ grid-template-columns:1fr; } }
+
+.bravo-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:16px;
+  color:var(--text);
+  box-shadow:var(--shadow);
+  transition:transform .16s ease, box-shadow .2s ease;
+}
+.bravo-card:hover{ transform:translateY(-2px); box-shadow:var(--shadow-lg); }
+
+.bravo-card.primary{
+  background:var(--accent);
+  color:#FFF;
+  border:1px solid transparent;
+  box-shadow:var(--shadow-lg);
+}
+.bravo-card .label{
+  font-size:.85rem; color:var(--text-muted); margin-bottom:4px; letter-spacing:.2px;
+}
+.bravo-card.primary .label{ color:rgba(255,255,255,.9); }
+.bravo-card .value{ font-weight:700; font-size:1.6rem; line-height:1.2; }
+.bravo-card .sub{ font-size:.9rem; opacity:.9; margin-top:4px; }
+
+/* Meta arriba de cards */
+.bravo-meta{
+  margin:8px 0 12px 0; padding:10px 12px;
+  background:var(--surface-2); color:var(--text);
+  border:1px solid var(--border); border-radius:var(--radius);
+  text-align:center; font-size:1rem; box-shadow:var(--shadow);
+}
+
+/* Titulares y spacing */
+h1,h2,h3,h4{ color:var(--text); }
+.block-container{ padding-top:1.25rem; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
@@ -139,36 +221,13 @@ def require_login():
 # Llamar al guardia inmediatamente después de set_page_config
 require_login()
 
-# --- Estilos para tarjetas de resultado ---
-st.markdown("""
-<style>
-.bravo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:8px;}
-@media (max-width:1100px){.bravo-grid{grid-template-columns:1fr;}}
-.bravo-card{background:#111418;border:1px solid #2a2f36;border-radius:14px;padding:16px;}
-.bravo-card.primary{border-color:#3ff576;background:linear-gradient(180deg,#1a1f25,#14181d);}
-.bravo-card .label{font-size:.85rem;color:#a6adbb;margin-bottom:4px;letter-spacing:.2px;}
-.bravo-card .value{font-weight:700;font-size:1.6rem;line-height:1.2;}
-.bravo-card .sub{font-size:.9rem;color:#8b93a2;margin-top:4px;}
-.bravo-meta{
-  margin:8px 0 12px 0;
-  padding:10px 12px;
-  background:#0f141a;
-  border:1px solid #2a2f36;
-  border-radius:12px;
-  text-align:center;
-  color:rgba(220,230,245,.9);
-  font-size:1rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
 # ---- Estado inicial ----
 if "last_quote" not in st.session_state:
     st.session_state["last_quote"] = None
 
 # ===== Importar parser =====
 try:
-    from brief_parser import detect_module_weights, debug_parse
+    from brief_parser import detect_module_weights
 except Exception as e:
     st.error(f"No se pudo importar brief_parser: {e}")
     st.stop()
@@ -367,9 +426,6 @@ def merge_weights(parser_weights: Dict[str, float], inferred: Dict[str, float]) 
     return pw
 
 # === PDF / wkhtmltopdf helpers ===
-import os
-import shutil
-
 def _pdfkit_config():
     """
     Detecta wkhtmltopdf en:
@@ -436,9 +492,6 @@ def _build_quote_context_from_session(rate_display: float) -> dict:
     )
 
 # === Helper unificado: guarda en Sheets + genera PDF (sin mensajes internos) ===
-import tempfile
-import os
-
 def save_and_generate_pdf(rate_display: float) -> bool:
     """
     Guarda la fila en Google Sheets y genera el PDF en memoria.
@@ -460,111 +513,25 @@ def save_and_generate_pdf(rate_display: float) -> bool:
 
         # --- Contexto
         ctx = _build_quote_context_from_session(rate_display)
-        
-        # --- Generar HTML del body (quote.html)
+
+        # --- Render principal del PDF (fix: definimos body_html aquí)
         body_html = render_quote_html(**ctx)
-        
-        # --- Crear footer HTML simplificado y optimizado para wkhtmltopdf
-        footer_html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <style>
-        body {{
-            margin: 0;
-            padding: 8mm 0 0 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-            text-align: center;
-            font-size: 9pt;
-            color: #000000;
-        }}
-        .footer-content {{
-            display: block;
-            width: 100%;
-        }}
-        .footer-content img {{
-            max-height: 45px;
-            display: block;
-            margin: 0 auto 2mm;
-        }}
-        .footer-text {{
-            color: #000000;
-            font-size: 9pt;
-            line-height: 1.4;
-        }}
-    </style>
-</head>
-<body>
-    <div class="footer-content">
-        <img src="{ctx.get('studio_logo_url', 'https://thisisbravo.co/wp-content/uploads/2025/11/logo.png')}" alt="Logo">
-        <div class="footer-text">
-            <strong>{ctx.get('studio_slogan', 'LATAM BRAND STUDIO')}</strong><br>
-            {ctx.get('estudio_mail', 'hola@thisisbravo.co')} · {ctx.get('estudio_web', 'www.thisisbravo.co')}
-        </div>
-    </div>
-</body>
-</html>"""
-        
-        # Crear/asegurar un directorio controlado para assets temporales
+
+        # --- Footer local temporal
         tmp_dir = Path("tmp_assets")
         tmp_dir.mkdir(exist_ok=True)
-        
-        # --- Crear archivo temporal para el footer
-        import tempfile
-        import os
-
+        footer_html = render_quote_footer_html(**ctx)
         with tempfile.NamedTemporaryFile(
-            mode='w', 
-            suffix='.html', 
-            delete=False, 
-            encoding='utf-8',
+            mode="w",
+            suffix=".html",
+            delete=False,
+            encoding="utf-8",
             dir=tmp_dir
         ) as tmp_footer:
-            tmp_footer.write(footer_html_content)
+            tmp_footer.write(footer_html)
             footer_path = tmp_footer.name
 
         try:
-            # --- Configuración PDF (bloque depurado, seguro y autocontenido)
-
-            # 0) HTML principal (asegúrate de haberlo definido antes como `html`)
-            #    Si tu variable se llamaba `body_html`, usa esa al construir `html` antes de este bloque.
-            #    Ejemplo arriba en tu flujo:
-            #    ctx = _build_quote_context_from_session(rate_display)
-            #    html = render_quote_html(**ctx)
-
-            # 1) Determinar fuente del footer (remoto vs local)
-            remote_footer_url = None
-
-            used_footer_file = False        # bandera para saber si creamos archivo temporal
-            footer_path = None              # ruta del archivo temporal (si aplica)
-            footer_dir = None               # dir permitido (si aplica)
-
-            if remote_footer_url:
-                # Modo remoto: no se crea archivo local ni se necesita allow
-                footer_url = remote_footer_url
-            else:
-                # Modo local: crear/asegurar directorio controlado y archivo temporal
-                tmp_dir = Path("tmp_assets")
-                tmp_dir.mkdir(exist_ok=True)
-
-                # Renderizar footer SOLO en modo local
-                footer_html = render_quote_footer_html(**ctx)
-
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    suffix=".html",
-                    delete=False,
-                    encoding="utf-8",
-                    dir=tmp_dir
-                ) as tmp_footer:
-                    tmp_footer.write(footer_html)
-                    footer_path = tmp_footer.name
-
-                footer_dir = str(tmp_dir.resolve())
-                footer_url = "file://" + footer_path
-                used_footer_file = True
-
-            # 2) Construir opciones (sumamos headers y tolerancia de carga remota)
             options = {
                 "encoding": "UTF-8",
                 "page-size": "A4",
@@ -572,29 +539,25 @@ def save_and_generate_pdf(rate_display: float) -> bool:
                 "margin-right": "16mm",
                 "margin-bottom": "35mm",
                 "margin-left": "16mm",
-                "footer-html": footer_url,              # remoto (https) o local (file://)
+                "footer-html": "file://" + footer_path,
                 "footer-spacing": "5",
                 "enable-local-file-access": "",
                 "load-error-handling": "ignore",
                 "custom-header": [
                     ("User-Agent",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"),
+                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                     "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"),
                 ],
-                # "quiet": "",  # opcional (diagnóstico)
             }
-            if used_footer_file and footer_dir:
-                options["allow"] = footer_dir
+            options["allow"] = str(tmp_dir.resolve())
 
-            # 4) Generar PDF
             pdf_bytes = pdfkit.from_string(
-                body_html,  # ⬅️ Usa el HTML principal (ajusta si tu var se llama distinto)
+                body_html,
                 False,
                 configuration=_pdfkit_config(),
                 options=options
             )
 
-            # --- Guardar en sesión para descarga
             st.session_state["last_pdf_bytes"] = pdf_bytes
             fecha = datetime.now().strftime("%Y%m%d")
             cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
@@ -602,22 +565,19 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             return True
 
         finally:
-            # Limpiar archivo temporal SOLO si fue creado
             try:
-                if used_footer_file and footer_path and os.path.exists(footer_path):
+                if footer_path and os.path.exists(footer_path):
                     os.unlink(footer_path)
             except Exception:
                 pass
-    
+
     except Exception as e:
-            st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
-            import traceback
-            st.error(traceback.format_exc())
-            return False
+        st.error(f"No se pudo completar el guardado/generación: {type(e).__name__}: {e}")
+        import traceback
+        st.error(traceback.format_exc())
+        return False
 
-            # ===== Tasa de cambio en vivo con fallbacks y cache =====
 @st.cache_data(ttl=3600, show_spinner=False)
-
 def get_live_usd_to_cop() -> Optional[Tuple[float, str]]:
     """Devuelve (tasa, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None."""
     try:
@@ -725,8 +685,6 @@ def save_quote_to_sheets(
 
     except gspread.SpreadsheetNotFound:
         st.error("No se encontró el Sheet por ID. Verificá SHEET_ID y comparte el Sheet con la cuenta de servicio (Editor).")
-    except FileNotFoundError:
-        st.error(f"No se encontró '{SERVICE_ACCOUNT_FILE}' en la carpeta de la app.")
     except Exception as e:
         st.exception(e)
     return False
@@ -943,18 +901,17 @@ def render_quote_html(
 
             items_por_nivel = DELIVERABLES.get(k, {})
 
-            # Normalización de niveles por módulo (mapea variantes a 'lite'/'full'/'plus')
+            # Normalización de niveles por módulo
             if nivel_bruto == "plus":
                 nivel_norm = "plus"
             elif nivel_bruto in ("full", "rebranding") or ("×" in nivel_bruto):
                 nivel_norm = "full"
             elif nivel_bruto in ("refresh",):
-                # refresh se aproxima a 'lite' en creación; en general lo tratamos como 'lite'
                 nivel_norm = "lite"
             else:
                 nivel_norm = "lite"
 
-            # Research (A) usa niveles 'lite' y 'full' de la biblioteca (sin 'base')
+            # A (Research) y D (Brandbook) reglas
             if k == "A":
                 items_norm = {
                     "lite": items_por_nivel.get("lite", []),
@@ -962,7 +919,6 @@ def render_quote_html(
                     "plus": items_por_nivel.get("plus", []),
                 }
             elif k == "D":
-                # D = Brandbook NO acumulativo: usamos exactamente el nivel elegido
                 items_norm = {
                     "lite": items_por_nivel.get("lite", []),
                     "full": items_por_nivel.get("full", []),
@@ -975,7 +931,6 @@ def render_quote_html(
                     "plus": items_por_nivel.get("plus", []),
                 }
             if k == "D":
-                # Brandbook: no acumulativo
                 entregables_expand = items_norm.get(nivel_norm, [])
             else:
                 entregables_expand = expand_entregables_por_nivel(items_norm, nivel_norm)
@@ -1040,27 +995,6 @@ def render_quote_footer_html(
     }
     return tpl.render(**context)
 
-def render_quote_header_html(
-    *,
-    fecha_emision: str,
-    client_name: str,
-    **kwargs
-) -> str:
-    """Renderiza templates/quote_header.html y devuelve el HTML final."""
-    env = Environment(
-        loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
-        autoescape=select_autoescape(["html", "xml"]),
-        trim_blocks=True,
-        lstrip_blocks=True,
-    )
-    tpl = env.get_template("quote_header.html")
-    
-    context = {
-        "fecha_emision": fecha_emision,
-        "client_name": client_name,
-    }
-    return tpl.render(**context)
-
 # ===== Sidebar =====
 catalog = load_catalog_safely()
 catalog_rate = float(catalog.get("moneda", {}).get("usd_to_cop", catalog.get("cop_per_usd", catalog.get("tasa_cop", 4300))))
@@ -1096,7 +1030,7 @@ with left_col:
             placeholder="Ej: Re-branding regional, manual de identidad full, pack de 12 piezas, listo en 3 semanas…",
             key="brief_text",
         )
-    calcular = st.button("🚀 Calcular", key="btn_calcular")
+    calcular = st.button("Calcular", key="btn_calcular")
 
 with right_col:
     st.markdown("### Parámetros")
@@ -1160,16 +1094,53 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Falló la conexión: {type(e).__name__}: {e}")
 
-    if st.sidebar.button("🧹 Reset"):
+    if st.sidebar.button("Reset"):
         for k in ["last_quote","selected_quote_name","selected_quote_amount",
                 "last_pdf_bytes","last_pdf_name"]:
             st.session_state.pop(k, None)
         st.rerun()
+    
+    # --- Toggle modo claro / oscuro ---
+    st.sidebar.divider()
+    if "theme_mode" not in st.session_state:
+        st.session_state["theme_mode"] = "dark"
+
+    dark_default = st.session_state["theme_mode"] == "dark"
+    use_dark = st.sidebar.toggle("Modo oscuro", value=dark_default)
+    st.session_state["theme_mode"] = "dark" if use_dark else "light"
+
+# Inyectar el tema elegido (fuera del with st.sidebar)
+inject_theme(st.session_state["theme_mode"])
 
 # --- Contenedores en el orden que queremos ---
 result_section = st.container()
 save_section = st.container()
 checks_section = st.container()
+
+@st.cache_resource(show_spinner=False)
+def _sheet_client():
+    creds_info = dict(st.secrets["gcp_service_account"])
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
+    gc = gspread.authorize(creds)
+    return gc, creds.service_account_email
+
+def test_sheets_connection() -> dict:
+    gc, sa_email = _sheet_client()
+    sh = gc.open_by_key(SHEET_ID)
+    ws = sh.worksheet(WORKSHEET_NAME)
+    headers = ws.row_values(1)
+    return {
+        "service_account": sa_email,
+        "title": sh.title,
+        "worksheet": ws.title,
+        "headers": headers,
+    }
 
 # --- Helper para renderizar Comprobaciones en ambos flujos ---
 def render_checks(q: Dict[str, Any]):
@@ -1208,7 +1179,7 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
             options=list(opciones.keys()),
             horizontal=True,
             index=default_idx,
-            key="quote_choice_radio",          # <- misma key en todos los flujos
+            key="quote_choice_radio",
             label_visibility="collapsed",
         )
 
@@ -1231,7 +1202,7 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
             file_name=st.session_state.get("last_pdf_name", "cotizacion.pdf"),
             mime="application/pdf",
             use_container_width=True,
-            key="download_pdf_btn",            # <- una sola key para el botón de descarga
+            key="download_pdf_btn",
         )
 
 # ------ Lógica principal ------
