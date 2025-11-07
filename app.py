@@ -175,6 +175,26 @@ def inject_theme(mode: str = "dark"):
   color:#FFFFFF !important;
 }
 
+/* Radios y checkboxes: forzar acento del tema (evita rojos) */
+.stRadio input[type="radio"], input[type="radio"]{
+  accent-color: var(--accent) !important;
+}
+
+/* Pastillas del radiogroup: estado seleccionado sin rojos */
+[role="radiogroup"] label[aria-checked="true"]{
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(37,99,235,.20) !important; /* suave halo del tema */
+}
+
+/* Botón: evitar bordes/halo rojizos en focus/active */
+.stButton > button{
+  border: 1px solid var(--accent) !important;
+}
+.stButton > button:focus-visible{
+  outline: 3px solid rgba(37,99,235,.35) !important;
+  outline-offset: 2px !important;
+}
+
 /* Inputs */
 .stTextInput>div>div>input,
 .stTextArea textarea,
