@@ -39,21 +39,21 @@ def inject_font_and_base():
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* Forzar Inter global + fallbacks del sistema */
-html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton, .stRadio, .stDownloadButton {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
-}
+    /* Forzar Inter global + fallbacks del sistema */
+    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton, .stRadio, .stDownloadButton {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+    }
 
-/* Ajustes de tipografía generales */
-h1, h2, h3, h4 { font-weight: 700 !important; }
-h1 { font-size: 2rem !important; }
-h2 { font-size: 1.5rem !important; }
-h3 { font-size: 1.25rem !important; }
+    /* Ajustes de tipografía generales */
+    h1, h2, h3, h4 { font-weight: 700 !important; }
+    h1 { font-size: 2rem !important; }
+    h2 { font-size: 1.5rem !important; }
+    h3 { font-size: 1.25rem !important; }
 
-.block-container { 
-  padding-top: 1.5rem; 
-  padding-bottom: 2rem; 
-}
+    .block-container { 
+    padding-top: 1.5rem; 
+    padding-bottom: 2rem; 
+    }
 </style>
 """,
         unsafe_allow_html=True,
