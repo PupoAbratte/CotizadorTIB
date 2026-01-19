@@ -478,6 +478,12 @@ def to_cop_local(rate: float, usd: float) -> int:
         r = 4300.0
     return int(round(usd * r, 0))
 
+def to_ars_local(usd: float, usd_to_ars: float) -> int:
+    try:
+        return int(round(float(usd) * float(usd_to_ars)))
+    except Exception:
+        return 0
+
 # ===== Helpers de niveles =====
 def _nearly(x: float, target: float, tol: float = 0.05) -> bool:
     try:
@@ -605,16 +611,23 @@ def _safe_filename(s: str) -> str:
     s = re.sub(r"[^A-Za-z0-9._-]", "", s)
     return s or "cotizacion"
 
-def _build_quote_context_from_session(rate_display: float) -> dict:
+def _build_quote_context_from_session(rate_display: float, rate_ars_display: float) -> dict:
     q = st.session_state.get("last_quote") or {}
     choice = st.session_state.get("selected_quote_name") or "Lógico"
     amount = float(st.session_state.get("selected_quote_amount") or q.get("logico", 0.0))
+    pdf_currency = (st.session_state.get("pdf_currency") or "USD").upper()
+
     return dict(
         cliente_nombre=q.get("cliente_nombre", ""),
         brief=q.get("brief", ""),
         scenario_name=choice,
         amount_usd=amount,
+
         rate_cop=float(rate_display or 0),
+        rate_ars=float(rate_ars_display or 0),
+
+        pdf_currency=pdf_currency,
+
         mod_weights=q.get("mod_weights", q.get("modulos_pesos", {})),
         coefs=q.get("coefs", {}),
         estudio_nombre="This is Bravo",
@@ -629,7 +642,7 @@ def _build_quote_context_from_session(rate_display: float) -> dict:
         deliverables=_build_deliverables_from(q.get("mod_weights", q.get("modulos_pesos", {}))),
     )
 
-def save_and_generate_pdf(rate_display: float) -> bool:
+def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
     try:
         q = st.session_state.get("last_quote") or {}
         if not q:
@@ -645,7 +658,7 @@ def save_and_generate_pdf(rate_display: float) -> bool:
             return False
 
         # Contexto + HTML principal del PDF
-        ctx = _build_quote_context_from_session(rate_display)
+        ctx = _build_quote_context_from_session(rate_display, rate_ars_display)
         body_html = render_quote_html(**ctx)
 
         # Footer local temporal
@@ -698,29 +711,39 @@ def save_and_generate_pdf(rate_display: float) -> bool:
         st.error(traceback.format_exc())
         return False
 
+# ===== Tasa de cambio en vivo (COP + ARS) con fallbacks y cache =====
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_live_usd_to_cop() -> Optional[Tuple[float, str]]:
+def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
+    """Devuelve (rates_dict, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None.
+       rates_dict ejemplo: {"COP": 4300.12, "ARS": 900.55}
+    """
+    # 1) exchangerate.host
     try:
         resp = requests.get(
             "https://api.exchangerate.host/latest",
-            params={"base": "USD", "symbols": "COP"},
+            params={"base": "USD", "symbols": "COP,ARS"},
             timeout=8,
         )
         if resp.ok:
             data = resp.json()
-            rate = float(data["rates"]["COP"])
+            rates = data.get("rates", {}) or {}
+            cop = float(rates.get("COP"))
+            ars = float(rates.get("ARS"))
             ts = data.get("date") or datetime.utcnow().strftime("%Y-%m-%d")
-            return rate, f"exchangerate.host · {ts}"
+            return {"COP": cop, "ARS": ars}, f"exchangerate.host · {ts}"
     except Exception:
         pass
 
+    # 2) open.er-api.com
     try:
         resp = requests.get("https://open.er-api.com/v6/latest/USD", timeout=8)
         if resp.ok:
             data = resp.json()
-            rate = float(data["rates"]["COP"])
+            rates = data.get("rates", {}) or {}
+            cop = float(rates.get("COP"))
+            ars = float(rates.get("ARS"))
             ts = data.get("time_last_update_utc") or datetime.utcnow().strftime("%Y-%m-%d")
-            return rate, f"open.er-api.com · {ts}"
+            return {"COP": cop, "ARS": ars}, f"open.er-api.com · {ts}"
     except Exception:
         pass
 
@@ -908,17 +931,30 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
     }
 
 # ---------- Render helpers ----------
-def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_display):
+def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_display, rate_ars_display):
     st.markdown(
         f"<div class='bravo-meta'><b>Tarifa base: US$</b> {base_usd:,.2f}</div>",
         unsafe_allow_html=True
     )
+
     usd_min = f"USD {minimo:,.2f}"
     usd_log = f"USD {logico:,.2f}"
     usd_max = f"USD {maximo:,.2f}"
+
+    # COP
     cop_min = f"~ COP {to_cop_local(rate_display, minimo):,}"
     cop_log = f"~ COP {to_cop_local(rate_display, logico):,}"
     cop_max = f"~ COP {to_cop_local(rate_display, maximo):,}"
+
+    # ARS (si no hay tasa, mostramos N/D)
+    if rate_ars_display and float(rate_ars_display) > 0:
+        ars_min = f"~ ARS {int(round(float(minimo) * float(rate_ars_display))):,}"
+        ars_log = f"~ ARS {int(round(float(logico) * float(rate_ars_display))):,}"
+        ars_max = f"~ ARS {int(round(float(maximo) * float(rate_ars_display))):,}"
+    else:
+        ars_min = "~ ARS N/D"
+        ars_log = "~ ARS N/D"
+        ars_max = "~ ARS N/D"
 
     # NOTA: sin .primary fija — las 3 cards quedan neutras
     st.markdown(
@@ -927,17 +963,17 @@ def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_dis
   <div class="bravo-card" aria-label="Precio mínimo">
     <div class="label">Mínimo</div>
     <div class="value">{usd_min}</div>
-    <div class="sub">{cop_min}</div>
+    <div class="sub">{cop_min} · {ars_min}</div>
   </div>
   <div class="bravo-card" aria-label="Precio lógico">
     <div class="label">Lógico</div>
     <div class="value">{usd_log}</div>
-    <div class="sub">{cop_log}</div>
+    <div class="sub">{cop_log} · {ars_log}</div>
   </div>
   <div class="bravo-card" aria-label="Precio máximo">
     <div class="label">Máximo</div>
     <div class="value">{usd_max}</div>
-    <div class="sub">{cop_max}</div>
+    <div class="sub">{cop_max} · {ars_max}</div>
   </div>
 </div>
 """,
@@ -982,6 +1018,8 @@ def render_quote_html(
     scenario_name: str,
     amount_usd: float,
     rate_cop: float,
+    rate_ars: float = 0.0,
+    pdf_currency: str = "USD",
     mod_weights: Dict[str, float],
     coefs: Dict[str, float],
     validity_days: int = 30,
@@ -1006,6 +1044,31 @@ def render_quote_html(
         amount_cop = int(round(float(amount_usd) * float(rate_cop), 0))
     except Exception:
         amount_cop = 0
+
+    try:
+        amount_ars = int(round(float(amount_usd) * float(rate_ars), 0))
+    except Exception:
+        amount_ars = 0
+
+    pdf_currency = (pdf_currency or "USD").upper()
+
+    # Línea principal (la que se verá grande)
+    if pdf_currency == "COP":
+        scenario_amount_main = f"COP {amount_cop:,}"
+        sub1 = f"~ USD {amount_usd:,.2f}"
+        sub2 = f"~ ARS {amount_ars:,}" if amount_ars else "~ ARS N/D"
+    elif pdf_currency == "ARS":
+        scenario_amount_main = f"ARS {amount_ars:,}" if amount_ars else "ARS N/D"
+        sub1 = f"~ USD {amount_usd:,.2f}"
+        sub2 = f"~ COP {amount_cop:,}"
+    else:  # USD
+        scenario_amount_main = f"USD {amount_usd:,.2f}"
+        sub1 = f"~ COP {amount_cop:,}"
+        sub2 = f"~ ARS {amount_ars:,}" if amount_ars else "~ ARS N/D"
+
+    # PDF para cliente: mostrar solo la moneda principal
+    sub1 = ""
+    sub2 = ""
 
     intro_text = (
         "A continuación presentamos el detalle del proyecto: "
@@ -1088,8 +1151,9 @@ def render_quote_html(
         "client_name": cliente_nombre or "",
         "intro_text": intro_text,
         "scenario_name": scenario_name,
-        "scenario_amount_usd": f"{amount_usd:,.2f}",
-        "scenario_amount_cop": f"{amount_cop:,}",
+        "scenario_amount_main": scenario_amount_main,
+        "scenario_amount_sub1": sub1,
+        "scenario_amount_sub2": sub2,
         "breakdown": breakdown,
         "deliverables": deliverables or [],
         "payment_terms": payment_terms,
@@ -1126,19 +1190,30 @@ def render_quote_footer_html(
 
 # ===== Sidebar =====
 catalog = load_catalog_safely()
-catalog_rate = float(catalog.get("moneda", {}).get("usd_to_cop", catalog.get("cop_per_usd", catalog.get("tasa_cop", 4300))))
-live = get_live_usd_to_cop()
-if live:
-    rate_display, rate_source = live
-else:
-    rate_display, rate_source = catalog_rate, "catálogo (fallback)"
 
-with st.sidebar:
-    st.header("Tasa de cambio")
-    st.caption(
-        f"**{money(rate_display)} COP / USD**  \n"
-        f"_Fuente: {rate_source} · Actualizado: {datetime.now().strftime('%d-%m-%Y / %H:%M')}_"
-    )
+# Fallbacks desde catálogo (COP existe seguro; ARS es opcional)
+catalog_rate_cop = float(
+    catalog.get("moneda", {}).get("usd_to_cop", catalog.get("cop_per_usd", catalog.get("tasa_cop", 4300)))
+)
+catalog_rate_ars = float(catalog.get("moneda", {}).get("usd_to_ars", 0) or 0)
+
+live = get_live_usd_rates()
+if live:
+    rates, rate_source = live
+    rate_display = float(rates.get("COP", catalog_rate_cop) or catalog_rate_cop)  # COP (se mantiene como "rate_display")
+    rate_ars_display = float(rates.get("ARS", catalog_rate_ars) or catalog_rate_ars)  # ARS
+else:
+    rate_display = catalog_rate_cop
+    rate_ars_display = catalog_rate_ars
+    rate_source = "catálogo (fallback)"
+
+st.sidebar.header("Tasa de cambio")
+ars_line = f"**{money(rate_ars_display)} ARS / USD**" if rate_ars_display else "**ARS / USD: N/D**"
+st.sidebar.caption(
+    f"**{money(rate_display)} COP / USD**  \n"
+    f"{ars_line}  \n"
+    f"_Fuente: {rate_source} · Actualizado: {datetime.now().strftime('%d-%m-%Y / %H:%M')}_"
+)
 
 # ===== UI principal =====
 st.title("Cotizador — This is Bravo")
@@ -1203,6 +1278,7 @@ with right_col:
             "Decisores",
             ["uno", "dos", "tres_o_mas"],
             index=0,
+            format_func=lambda x: {"uno": "1", "dos": "2", "tres_o_mas": "3+"}.get(x, x),
             help="Cantidad de decisores/instancias de aprobación.",
             key="f_stakeholders",
         )
@@ -1267,9 +1343,9 @@ def render_checks(q: Dict[str, Any]):
         with st.expander("Coeficientes aplicados", expanded=False):
             st.json(q.get("coefs", {}))
 
-def render_result_ui(q: Dict[str, Any], rate_display: float):
+def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: float):
     st.subheader("Resultado")
-    render_result_cards(q["minimo"], q["logico"], q["maximo"], q["base_usd"], q["adjusted_usd"], rate_display)
+    render_result_cards(q["minimo"], q["logico"], q["maximo"], q["base_usd"], q["adjusted_usd"], rate_display, rate_ars_display)
 
     with st.form("quote_actions"):
         st.markdown("#### Elegí una opción")
@@ -1285,6 +1361,14 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
             key="quote_choice_radio",
             label_visibility="collapsed",
         )
+        
+        pdf_currency = st.selectbox(
+            "Moneda del PDF",
+            ["USD", "COP", "ARS"],
+            index=["USD", "COP", "ARS"].index(st.session_state.get("pdf_currency", "USD")),
+            key="pdf_currency",
+            help="Define en qué moneda se mostrará el monto principal del PDF.",
+        )
 
         submit = st.form_submit_button("Guardar cotización", use_container_width=True)
 
@@ -1293,7 +1377,7 @@ def render_result_ui(q: Dict[str, Any], rate_display: float):
     st.caption(f"Opción elegida: **{choice}** — **USD {opciones[choice]:,.2f}**")
 
     if submit:
-        ok = save_and_generate_pdf(rate_display)
+        ok = save_and_generate_pdf(rate_display, rate_ars_display)
         if ok:
             st.success("Cotización guardada y PDF generado. Abajo podés bajarlo.")
 
@@ -1388,13 +1472,13 @@ if calcular:
 
         q = st.session_state["last_quote"]
         with result_section:
-            render_result_ui(q, rate_display)
+            render_result_ui(q, rate_display, rate_ars_display)
         render_checks(q)
 
 elif st.session_state.get("last_quote"):
     q = st.session_state["last_quote"]
     with result_section:
-        render_result_ui(q, rate_display)
+        render_result_ui(q, rate_display, rate_ars_display)
     render_checks(q)
 
 with save_section:

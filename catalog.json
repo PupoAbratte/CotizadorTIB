@@ -57,5 +57,32 @@
   "bundles": {
     "dos_mods": 1.00,
     "tres_o_mas": 1.00
+  },
+
+  "overhead": {
+    "monthly_usd": {
+      "Adobe": 90,
+      "Google": 28,
+      "Figma": 36,
+      "ChatGPT": 20,
+      "Internet": 40,
+      "Hosting": 7,
+      "Dominio": 3.5,
+      "Mail": 1.6
+    },
+    "billable_hours_per_month": 76.8,
+    "module_hours": {
+      "A": 10,
+      "B_lite": 12,
+      "B_full": 20,
+      "C_refresh": 20,
+      "C_rebranding": 32,
+      "C_full": 44,
+      "D_lite": 14,
+      "D_full": 24,
+      "E_lite": 10,
+      "E_full": 18,
+      "E_plus": 28
+    }
   }
 }

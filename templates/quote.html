@@ -220,8 +220,15 @@
         <div class="scenario">
           <span class="badge">Monto total</span>
         </div>
-        <div class="usd">USD {{ scenario_amount_usd }}</div>
-        <div class="cop">~ COP {{ scenario_amount_cop }}</div>
+        <div class="usd">{{ scenario_amount_main }}</div>
+
+        {% if scenario_amount_sub1 %}
+          <div class="cop">{{ scenario_amount_sub1 }}</div>
+        {% endif %}
+        
+        {% if scenario_amount_sub2 %}
+          <div class="cop">{{ scenario_amount_sub2 }}</div>
+        {% endif %}
       </div>
     </section>
 
