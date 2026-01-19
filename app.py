@@ -1212,7 +1212,6 @@ ars_line = f"**{money(rate_ars_display)} ARS / USD**" if rate_ars_display else "
 st.sidebar.caption(
     f"**{money(rate_display)} COP / USD**  \n"
     f"{ars_line}  \n"
-    f"_Fuente: {rate_source} · Actualizado: {datetime.now().strftime('%d-%m-%Y / %H:%M')}_"
 )
 
 # ===== UI principal =====
