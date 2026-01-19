@@ -797,7 +797,7 @@ def save_quote_to_sheets(
             "created_local": local_now.isoformat(timespec="seconds"),
             "cliente_nombre": (cliente_nombre or "").strip(),
             "cliente_tipo": cliente_tipo,
-            "brief": brief.strip(),
+            "brief": (brief or "").strip(),
             "base_usd": float(base_usd),
             "ajustado_usd": float(adjusted_usd),
             "minimo_usd": float(minimo),
@@ -822,16 +822,42 @@ def save_quote_to_sheets(
             key = header_to_payload_key.get(h)
             row.append(payload.get(key, ""))
 
-        ws.append_row(row, value_input_option="USER_ENTERED")
+        # ------------------------------------------------------------
+        # Escribir SIEMPRE en la primera fila vacía real (ignorando formato)
+        # usando Col A (Fecha) como ancla y considerando fórmulas como "ocupado".
+        # ------------------------------------------------------------
+        from gspread.utils import rowcol_to_a1
+
+        max_rows = ws.row_count  # normalmente 1000 en tu hoja
+        col_a_values = ws.get(f"A1:A{max_rows}")  # valores calculados
+        col_a_formulas = ws.get(f"A1:A{max_rows}", value_render_option="FORMULA")  # detecta '='
+
+        last_used = 1  # header
+        for i in range(2, max_rows + 1):
+            v = (col_a_values[i - 1][0] if i - 1 < len(col_a_values) and col_a_values[i - 1] else "")
+            f = (col_a_formulas[i - 1][0] if i - 1 < len(col_a_formulas) and col_a_formulas[i - 1] else "")
+
+            # normalización para evitar "espacios invisibles"
+            v_norm = str(v).replace("\u00a0", " ").strip()
+            f_norm = str(f).strip()
+
+            # Si hay valor real o hay fórmula, la fila cuenta como ocupada
+            if v_norm != "" or (f_norm.startswith("=") and f_norm != "="):
+                last_used = i
+
+        next_row = last_used + 1
+
+        start = rowcol_to_a1(next_row, 1)
+        end = rowcol_to_a1(next_row, len(headers))
+        ws.update(f"{start}:{end}", [row], value_input_option="USER_ENTERED")
+
         return True
 
     except gspread.SpreadsheetNotFound:
-        st.error("No se encontró el Sheet por ID. Verificá SHEET_ID y comparte el Sheet con la cuenta de servicio (Editor).")
+        st.error("No se encontró el Sheet por ID. Verificá SHEET_ID y compartí el Sheet con la cuenta de servicio (Editor).")
     except Exception as e:
         st.exception(e)
     return False
-
-@st.cache_resource(show_spinner=False)
 def _sheet_client():
     creds_info = dict(st.secrets["gcp_service_account"])
     creds = service_account.Credentials.from_service_account_info(
