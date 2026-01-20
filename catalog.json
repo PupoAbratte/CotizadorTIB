@@ -19,7 +19,8 @@
       "Corporativo": 1.25,
       "Regional": 1.15,
       "PyME": 1.00,
-      "Emprendimiento/Startup": 0.90,
+      "Startup": 0.90,
+      "Emprendimiento": 0.90,
       "Fundacion": 0.80
     },
     "urgencia": {

@@ -20,6 +20,7 @@ import unicodedata
 import tempfile
 import os
 import shutil
+from auth import require_login
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
@@ -337,47 +338,8 @@ hr{ border:none; border-top:1px solid var(--border); margin:1.5rem 0; }
 
 inject_font_and_base()
 
-# --- Auth simple (usa .streamlit/secrets.toml [auth.users]) ---
-def require_login():
-    users = dict(st.secrets.get("auth", {}).get("users", {}))
-    if not users:
-        return True
-
-    if st.session_state.get("auth_ok"):
-        with st.sidebar:
-            st.markdown(
-                f"""
-<div class="session-box">
-  <div style="font-weight:600; margin-bottom:6px;">Sesión</div>
-  <div style="opacity:.9; margin-bottom:8px;">{st.session_state.get('auth_email','')}</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-            st.button("Cerrar sesión", key="logout_btn")
-            if st.session_state.get("logout_btn"):
-                for k in ("auth_ok", "auth_email"):
-                    st.session_state.pop(k, None)
-                st.rerun()
-        return True
-
-    st.title("Accedé con tus credenciales")
-    with st.form("login_form", clear_on_submit=False):
-        email = st.text_input("Email", value="", key="auth_email_input")
-        pwd = st.text_input("Contraseña", type="password", value="", key="auth_pwd_input")
-        submit = st.form_submit_button("Entrar")
-
-    if submit:
-        if email in users and pwd == users[email]:
-            st.session_state["auth_ok"] = True
-            st.session_state["auth_email"] = email
-            st.rerun()
-        else:
-            st.error("Credenciales inválidas. Probá de nuevo.")
-
-    st.stop()
-
-require_login()
+from auth import require_login
+require_login(session_hours=3)
 
 # --- Estilos para tarjetas de resultado (estructura base; colores vienen del tema) ---
 st.markdown("""
@@ -782,6 +744,7 @@ def save_quote_to_sheets(
             "Min USD": "minimo_usd",
             "Base USD": "logico_usd",
             "Max USD": "maximo_usd",
+            "Cotización elegida": "monto_elegido_usd",
             "tasa_cop_usd_usada": "tasa_cop_usd_usada",
             "Notas": "notas",
             "Cotizacion final": "cotizacion_final_usd",
@@ -1268,7 +1231,7 @@ with right_col:
     with c1:
         cliente_tipo = st.selectbox(
             "Tipo de cliente",
-            ["Corporativo", "Regional", "PyME", "Emprendimiento/Startup", "Fundacion"],
+            ["Corporativo", "Regional", "PyME", "Emprendimiento", "Startup", "Fundacion"],
             index=2,
             help="Afecta el coeficiente según el tipo de organización.",
             key="f_cliente_tipo",
