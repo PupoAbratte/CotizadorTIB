@@ -74,6 +74,52 @@ def shorten_label(s: str, max_len: int = 18) -> str:
     return s[: max_len - 1] + "…"
 
 # =========================
+# Parseo de fecha (incluye meses en español)
+# =========================
+MESES_ES = {
+    "enero": "01",
+    "febrero": "02",
+    "marzo": "03",
+    "abril": "04",
+    "mayo": "05",
+    "junio": "06",
+    "julio": "07",
+    "agosto": "08",
+    "septiembre": "09",
+    "setiembre": "09",
+    "octubre": "10",
+    "noviembre": "11",
+    "diciembre": "12",
+}
+
+def parse_fecha_es(x):
+    """
+    Soporta:
+    - '5/12/2025 15:13:33'
+    - '5/12/2025'
+    - '5-Diciembre-2025' (mes en español)
+    """
+    if x is None:
+        return pd.NaT
+    s = str(x).strip()
+    if not s:
+        return pd.NaT
+
+    # 1) Intento directo (dayfirst=True para LATAM)
+    dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    if not pd.isna(dt):
+        return dt
+
+    # 2) Caso '5-Diciembre-2025'
+    s2 = s.lower()
+    for mes, num in MESES_ES.items():
+        if f"-{mes}-" in s2:
+            s2 = s2.replace(f"-{mes}-", f"-{num}-")
+            break
+
+    return pd.to_datetime(s2, errors="coerce", dayfirst=True)
+
+# =========================
 # UI
 # =========================
 st.set_page_config(page_title="Dashboard de cotizaciones — This is Bravo", page_icon="📊", layout="wide")
@@ -136,7 +182,9 @@ rename_map = {
 }
 df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
+# =========================
 # Parse moneda
+# =========================
 money_cols = [
     "base_sin_overhead_usd",
     "minimo_usd",
@@ -149,28 +197,36 @@ for col in money_cols:
     if col in df.columns:
         df[col] = df[col].apply(_parse_money_to_float)
 
-# Fechas y mes
+# =========================
+# Fechas (NO filtramos df completo; solo creamos df_ts para series)
+# =========================
 if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", dayfirst=True)
 elif "fecha" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["fecha"], errors="coerce")
+    df["timestamp"] = df["fecha"].apply(parse_fecha_es)
 else:
     df["timestamp"] = pd.NaT
 
-df = df[df["timestamp"].notna()].copy()
-df["mes"] = df["timestamp"].dt.to_period("M").astype(str)
-
-# Flags
-df["is_aprobada"] = df["cotizacion_aprobada_usd"].notna() if "cotizacion_aprobada_usd" in df.columns else False
-
-# =========================
-# KPIs (arriba)
-# =========================
+# df completo (para KPI de conteo)
 total_cotizaciones = len(df)
+
+# df_ts solo para gráficos mensuales (requiere timestamp)
+df_ts = df[df["timestamp"].notna()].copy()
+if not df_ts.empty:
+    df_ts["mes"] = df_ts["timestamp"].dt.to_period("M").astype(str)
+
+# Flags (en ambos, pero KPIs usan df completo)
+df["is_aprobada"] = df["cotizacion_aprobada_usd"].notna() if "cotizacion_aprobada_usd" in df.columns else False
+if not df_ts.empty:
+    df_ts["is_aprobada"] = df_ts["cotizacion_aprobada_usd"].notna() if "cotizacion_aprobada_usd" in df_ts.columns else False
+
+# =========================
+# KPIs (arriba) — usan df completo (no pierden filas)
+# =========================
 base_promedio = df["base_sin_overhead_usd"].mean() if "base_sin_overhead_usd" in df.columns else None
 enviada_promedio = df["cotizacion_enviada_usd"].mean() if "cotizacion_enviada_usd" in df.columns else None
 
-aprobadas_count = int(df["is_aprobada"].sum())
+aprobadas_count = int(df["is_aprobada"].sum()) if "is_aprobada" in df.columns else 0
 aprobacion_rate = (aprobadas_count / total_cotizaciones) if total_cotizaciones > 0 else 0.0
 
 ticket_promedio_global = None
@@ -187,25 +243,24 @@ c5.metric("Tasa de aprobación (%)", f"{aprobacion_rate*100:,.1f}")
 st.markdown("---")
 
 # =========================
-# Agregaciones para gráficos
+# Agregaciones para gráficos (usan df_ts)
 # =========================
-# Promedio enviado por mes
 enviada_mes = None
-if {"mes", "cotizacion_enviada_usd"}.issubset(df.columns):
+aprobada_mes = None
+
+if not df_ts.empty and {"mes", "cotizacion_enviada_usd"}.issubset(df_ts.columns):
     enviada_mes = (
-        df.groupby("mes")["cotizacion_enviada_usd"]
+        df_ts.groupby("mes")["cotizacion_enviada_usd"]
         .mean()
         .rename("enviada_promedio")
         .reset_index()
     )
 
-# Promedio aprobado por mes (solo aprobadas)
-aprobada_mes = None
-if {"mes", "cotizacion_aprobada_usd"}.issubset(df.columns):
-    tmp = df[df["is_aprobada"]].groupby("mes")["cotizacion_aprobada_usd"].mean()
+if not df_ts.empty and {"mes", "cotizacion_aprobada_usd"}.issubset(df_ts.columns):
+    tmp = df_ts[df_ts["is_aprobada"]].groupby("mes")["cotizacion_aprobada_usd"].mean()
     aprobada_mes = tmp.rename("aprobada_promedio").reset_index()
 
-# Donut por tipo
+# Donut por tipo (usa df completo)
 propuestas_tipo = None
 if "cliente_tipo" in df.columns:
     propuestas_tipo = (
@@ -224,7 +279,7 @@ colA, colB = st.columns(2, gap="large")
 with colA:
     st.subheader("Cotización enviada promedio por mes (USD)")
     if enviada_mes is None or enviada_mes.empty:
-        st.caption("No hay datos suficientes para calcular el promedio enviado por mes.")
+        st.caption("No hay datos suficientes con fecha válida para calcular el promedio enviado por mes.")
     else:
         fig1, ax1 = plt.subplots(figsize=(6, 3))
         ax1.plot(enviada_mes["mes"], enviada_mes["enviada_promedio"], marker="o")
@@ -235,7 +290,7 @@ with colA:
 with colB:
     st.subheader("Ticket aprobado promedio por mes (USD)")
     if aprobada_mes is None or aprobada_mes.empty:
-        st.caption("Aún no hay cotizaciones aprobadas cargadas.")
+        st.caption("Aún no hay cotizaciones aprobadas (con fecha válida) cargadas.")
     else:
         fig2, ax2 = plt.subplots(figsize=(6, 3))
         ax2.plot(aprobada_mes["mes"], aprobada_mes["aprobada_promedio"], marker="o")
@@ -285,7 +340,7 @@ with colC:
             wedges,
             labels,
             loc="center left",
-            bbox_to_anchor=(0.82, 0.5),  # adentro del canvas
+            bbox_to_anchor=(0.82, 0.5),
             frameon=False,
             labelcolor=DARK_FG,
             fontsize=8,
@@ -300,8 +355,8 @@ with colC:
 with colD:
     st.subheader("Notas")
     st.caption(
-        "Cuando haya más volumen, acá puede entrar: "
-        "tasa de aprobación por mes, distribución por rango de tickets, o histograma de montos enviados."
+        "Si alguna fila del Sheet tiene un formato de fecha no reconocible, igual cuenta para KPIs, "
+        "pero no entra en los gráficos mensuales."
     )
 
 st.caption("Fuente: Google Sheets (Worksheet: Quotes).")
