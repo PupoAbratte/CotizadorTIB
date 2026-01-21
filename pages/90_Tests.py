@@ -6,6 +6,16 @@ from pricing import (
     to_scenarios, to_cop
 )
 
+from ui import inject_font_and_base, inject_theme
+
+inject_font_and_base()
+
+# Si querés mantener el toggle, dejá la lógica como la tenés y acá ponés:
+# inject_theme("dark" if st.session_state.get("theme_dark", True) else "light")
+
+# Si querés forzar siempre un look:
+inject_theme("dark")
+
 st.set_page_config(page_title="Tests — Bravo Cotizador", layout="wide")
 
 # === Estilos (mismo look & feel que app.py) ===

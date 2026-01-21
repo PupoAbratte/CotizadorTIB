@@ -6,6 +6,16 @@ import streamlit as st
 import gspread
 from google.oauth2 import service_account
 
+from ui import inject_font_and_base, inject_theme
+
+inject_font_and_base()
+
+# Si querés mantener el toggle, dejá la lógica como la tenés y acá ponés:
+# inject_theme("dark" if st.session_state.get("theme_dark", True) else "light")
+
+# Si querés forzar siempre un look:
+inject_theme("dark")
+
 # =========================
 # Estilo dark (Matplotlib)
 # =========================
