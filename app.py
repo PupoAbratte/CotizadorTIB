@@ -334,6 +334,21 @@ button[data-testid="stBaseButton-secondary"]:hover{
 hr{ border:none; border-top:1px solid var(--border); margin:1.5rem 0; }
 .stAlert{ border-radius:var(--radius) !important; border:1px solid var(--border) !important; }
 
+/* ===== FIX: evitar que se vea el nombre del ícono (fallback) =====
+   Streamlit/Material Icons a veces renderiza el nombre del ícono como texto
+   (ej: keyboard_double_arrow_left). Esto lo oculta sin romper el toggle.
+*/
+[data-testid="stIconMaterial"]{
+  font-size: 0 !important;
+  line-height: 0 !important;
+}
+
+/* Si el SVG del ícono está presente, mantenelo visible */
+[data-testid="stIconMaterial"] svg{
+  font-size: 1rem !important;
+  line-height: 1 !important;
+}
+
 /* Scrollbar (opcional) */
 ::-webkit-scrollbar{ width:10px; height:10px; }
 ::-webkit-scrollbar-track{ background:var(--surface-2); }
