@@ -1252,7 +1252,6 @@ with st.sidebar:
     st.caption(
         f"**{money(rate_display)} COP / USD**  \n"
         f"{ars_line}  \n"
-        f"Fuente: {rate_source}"
     )
 
     st.divider()
