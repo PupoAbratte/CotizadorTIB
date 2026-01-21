@@ -1279,9 +1279,9 @@ left_col, right_col = st.columns([7, 5])
 with left_col:
     st.markdown("### Brief")
     with st.container(border=True):
-        cliente_nombre = st.text_input("Cliente (opcional)", placeholder="Ej: ACME SA", key="cliente_nombre")
+        cliente_nombre = st.text_input("Cliente", placeholder="Ej: ACME SA", key="cliente_nombre")
         brief = st.text_area(
-            "Brief del proyecto",
+            "Alcance del proyecto",
             height=220,
             placeholder="Ej: Re-branding regional, manual de identidad full, pack de 12 piezas, listo en 3 semanas…",
             key="brief_text",
