@@ -32,20 +32,30 @@ WORKSHEET_NAME = st.secrets.get("WORKSHEET_NAME", "Quotes")
 HERE = Path(__file__).parent
 CATALOG_PATH = HERE / "catalog.json"
 
-# ===== Tipografía base (Inter) =====
+# ===== Tipografía base (DM Sans) =====
 def inject_font_and_base() -> None:
-    import streamlit.components.v1 as components
-
-    components.html(
+    st.markdown(
         """
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
 <style>
-  html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea,
-  .stSelectbox, .stButton, .stRadio, .stDownloadButton {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+  /* Forzar DM Sans global (pisar Source Sans de Streamlit/emotion) */
+  html, body,
+  [data-testid="stAppViewContainer"],
+  [data-testid="stSidebar"],
+  [class^="st-emotion-cache"],
+  [class^="st-emotion-cache"] * {
+    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
   }
 
+  /* Mantener monospace donde corresponde */
+  code, pre, kbd, samp {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  }
+
+  /* Ajustes tipográficos */
   h1, h2, h3, h4 { font-weight: 700 !important; }
   h1 { font-size: 2rem !important; }
   h2 { font-size: 1.5rem !important; }
@@ -54,8 +64,7 @@ def inject_font_and_base() -> None:
   .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
 </style>
 """,
-        height=0,
-        width=0,
+        unsafe_allow_html=True,
     )
 
 # ===== Tema accesible (AA) con acento #6B4FC1 =====
