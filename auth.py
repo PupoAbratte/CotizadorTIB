@@ -107,7 +107,21 @@ def require_login(session_hours: float = SESSION_HOURS_DEFAULT) -> bool:
     # Logueado: sidebar + logout + sliding expiration
     if st.session_state.get("auth_ok"):
         with st.sidebar:
-            st.success(f"Sesión: {st.session_state.get('auth_email','')}")
+            email = st.session_state.get("auth_email", "")
+            st.markdown(
+                f"""
+                <div class="session-box">
+                <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:4px;">
+                    Sesión:
+                </div>
+                <div style="font-weight:600; color:var(--text);">
+                    {email}
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            
             if st.button("Cerrar sesión", key="logout_btn"):
                 # 1) limpiar estado
                 st.session_state.pop("auth_ok", None)
