@@ -148,7 +148,8 @@ button[data-testid="stBaseButton-primary"],
   border:1px solid var(--accent-hover) !important;
   border-radius:var(--radius) !important;
   font-weight:600 !important;
-  padding:0.6rem 1rem !important;
+  padding:0.35rem 0.9rem !important;
+  line-height:1.1 !important;
   box-shadow:var(--shadow) !important;
   transition:all 0.2s ease !important;
 }
@@ -184,7 +185,8 @@ button[data-testid="stBaseButton-secondary"]{
   border:1px solid var(--border-strong) !important;
   border-radius:var(--radius) !important;
   font-weight:600 !important;
-  padding:0.6rem 1rem !important;
+  padding:0.35rem 0.9rem !important;
+  line-height:1.1 !important;
   box-shadow:none !important;
   transition:all 0.2s ease !important;
 }

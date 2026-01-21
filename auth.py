@@ -121,7 +121,6 @@ def require_login(session_hours: float = SESSION_HOURS_DEFAULT) -> bool:
                 """,
                 unsafe_allow_html=True,
             )
-            
             if st.button("Cerrar sesión", key="logout_btn"):
                 # 1) limpiar estado
                 st.session_state.pop("auth_ok", None)
