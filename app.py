@@ -34,7 +34,9 @@ CATALOG_PATH = HERE / "catalog.json"
 
 # ===== Tipografía base (Inter) =====
 def inject_font_and_base() -> None:
-    st.markdown(
+    import streamlit.components.v1 as components
+
+    components.html(
         """
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -52,7 +54,8 @@ def inject_font_and_base() -> None:
   .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
 </style>
 """,
-        unsafe_allow_html=True,
+        height=0,
+        width=0,
     )
 
 # ===== Tema accesible (AA) con acento #6B4FC1 =====
