@@ -1,26 +1,27 @@
-# app.py — UI + tema accesible (Inter, azul #2563EB), toggle dark/light 1-click
-# + Sin card destacada por defecto
-# + Caja de sesión neutra (sin verde)
-# + Fix PDF render (define body_html)
+# app.py — Cotizador (Streamlit)
+# - UI: Inter + tema accesible con acento #6B4FC1 (dark/light 1-click)
+# - Cotización + guardado en Google Sheets + PDF (wkhtmltopdf)
+# - Código depurado: sin duplicaciones, sin estado “zombie”, reset real, sin globals en sheets
 
 import json
+import os
+import re
+import shutil
+import tempfile
+import unicodedata
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-from brief_parser import DELIVERABLES
 
-import streamlit as st
-import requests
 import gspread
-from google.oauth2 import service_account
-from datetime import datetime
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pdfkit
-import re
-import unicodedata
-import tempfile
-import os
-import shutil
+import requests
+import streamlit as st
+from google.oauth2 import service_account
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
 from auth import require_login
+from brief_parser import DELIVERABLES
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
@@ -28,44 +29,37 @@ st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
 SHEET_ID = st.secrets["SHEET_ID"]
 WORKSHEET_NAME = st.secrets.get("WORKSHEET_NAME", "Quotes")
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+HERE = Path(__file__).parent
+CATALOG_PATH = HERE / "catalog.json"
 
-# ------- Tipografía base (Inter) -------
-def inject_font_and_base():
+# ===== Tipografía base (Inter) =====
+def inject_font_and_base() -> None:
     st.markdown(
         """
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-    /* Forzar Inter global + fallbacks del sistema */
-    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea, .stSelectbox, .stButton, .stRadio, .stDownloadButton {
+  html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea,
+  .stSelectbox, .stButton, .stRadio, .stDownloadButton {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
-    }
+  }
 
-    /* Ajustes de tipografía generales */
-    h1, h2, h3, h4 { font-weight: 700 !important; }
-    h1 { font-size: 2rem !important; }
-    h2 { font-size: 1.5rem !important; }
-    h3 { font-size: 1.25rem !important; }
+  h1, h2, h3, h4 { font-weight: 700 !important; }
+  h1 { font-size: 2rem !important; }
+  h2 { font-size: 1.5rem !important; }
+  h3 { font-size: 1.25rem !important; }
 
-    .block-container { 
-    padding-top: 1.5rem; 
-    padding-bottom: 2rem; 
-    }
+  .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
 </style>
 """,
         unsafe_allow_html=True,
     )
 
-# ------- Tema accesible (AA) con azul conservador #2563EB -------
-def inject_theme(mode: str = "dark"):
+# ===== Tema accesible (AA) con acento #6B4FC1 =====
+def inject_theme(mode: str = "dark") -> None:
     """
-    Tema con contraste AA, jerarquía clara y acento azul conservador.
-    Acento: #2563EB (hover #1D4ED8).
-    Radio global: 8px.
+    Tema con contraste AA, jerarquía clara y acento #6B4FC1.
+    Hover del acento: #C0B7F9. Radio global: 8px.
     """
 
     if mode == "dark":
@@ -84,15 +78,14 @@ def inject_theme(mode: str = "dark"):
   --border:#1F2937;
   --border-strong:#2B3645;
 
-  --accent:#2563EB;
-  --accent-hover:#1D4ED8;
+  --accent:#6B4FC1;
+  --accent-hover:#C0B7F9;
   --ring:#60A5FA;
 
   --radius:8px;
 
   --shadow:0 4px 6px -1px rgba(0,0,0,.45), 0 2px 4px -2px rgba(0,0,0,.35);
   --shadow-lg:0 10px 15px -3px rgba(0,0,0,.55), 0 4px 6px -4px rgba(0,0,0,.45);
-  --shadow-xl:0 20px 25px -5px rgba(0,0,0,.6), 0 8px 10px -6px rgba(0,0,0,.5);
 }
 """
     else:
@@ -111,42 +104,42 @@ def inject_theme(mode: str = "dark"):
   --border:#D1D9E6;
   --border-strong:#C0CADB;
 
-  --accent:#2563EB;
-  --accent-hover:#1D4ED8;
+  --accent:#6B4FC1;
+  --accent-hover:#C0B7F9;
   --ring:#3B82F6;
 
   --radius:8px;
 
   --shadow:0 1px 3px 0 rgba(0,0,0,.10), 0 1px 2px -1px rgba(0,0,0,.08);
   --shadow-lg:0 10px 15px -3px rgba(0,0,0,.12), 0 4px 6px -4px rgba(0,0,0,.10);
-  --shadow-xl:0 20px 25px -5px rgba(0,0,0,.14), 0 8px 10px -6px rgba(0,0,0,.10);
 }
 """
 
     st.markdown(
         "<style>\n"
         + css_vars
-        + """
+        + r"""
 /* ===== BASE ===== */
 [data-testid="stAppViewContainer"]{
-  background:var(--bg); 
+  background:var(--bg);
   color:var(--text);
   transition: background-color 0.25s ease, color 0.25s ease;
 }
-
 [data-testid="stSidebar"]{
-  background:var(--surface-2); 
+  background:var(--surface-2);
   color:var(--text);
   border-right:1px solid var(--border);
   transition: background-color 0.25s ease, color 0.25s ease;
 }
+[data-testid="stSidebar"] *{ color:var(--text); }
 
-[data-testid="stSidebar"] *{
-  color:var(--text);
-}
-
-/* Botones (global) */
-.stButton>button, .stDownloadButton>button{
+/* ===== BUTTONS ===== */
+/* Primary */
+[data-testid="stBaseButton-primary"] button,
+[data-testid="baseButton-primary"] button,
+button[data-testid="baseButton-primary"],
+button[data-testid="stBaseButton-primary"],
+.stDownloadButton>button{
   background:var(--accent) !important;
   color:#FFFFFF !important;
   border:1px solid var(--accent-hover) !important;
@@ -156,47 +149,67 @@ def inject_theme(mode: str = "dark"):
   box-shadow:var(--shadow) !important;
   transition:all 0.2s ease !important;
 }
-.stButton>button:hover, .stDownloadButton>button:hover{ 
+[data-testid="stBaseButton-primary"] button:hover,
+[data-testid="baseButton-primary"] button:hover,
+button[data-testid="baseButton-primary"]:hover,
+button[data-testid="stBaseButton-primary"]:hover,
+.stDownloadButton>button:hover{
   background:var(--accent-hover) !important;
   box-shadow:var(--shadow-lg) !important;
   transform:translateY(-1px);
 }
-.stButton>button:active, .stDownloadButton>button:active{ 
+[data-testid="stBaseButton-primary"] button:active,
+[data-testid="baseButton-primary"] button:active,
+.stDownloadButton>button:active{
   transform:translateY(0);
   box-shadow:var(--shadow) !important;
 }
-.stButton>button:focus, .stDownloadButton>button:focus{ 
+[data-testid="stBaseButton-primary"] button:focus,
+[data-testid="baseButton-primary"] button:focus,
+.stDownloadButton>button:focus{
   outline:2px solid var(--ring) !important;
   outline-offset:2px !important;
 }
 
-/* Botones del sidebar: forzar texto blanco */
-[data-testid="stSidebar"] .stButton>button, 
-[data-testid="stSidebar"] .stDownloadButton>button {
+/* Secondary */
+[data-testid="stBaseButton-secondary"] button,
+[data-testid="baseButton-secondary"] button,
+button[data-testid="baseButton-secondary"],
+button[data-testid="stBaseButton-secondary"]{
+  background:var(--surface-2) !important;
+  color:var(--text) !important;
+  border:1px solid var(--border-strong) !important;
+  border-radius:var(--radius) !important;
+  font-weight:600 !important;
+  padding:0.6rem 1rem !important;
+  box-shadow:none !important;
+  transition:all 0.2s ease !important;
+}
+[data-testid="stBaseButton-secondary"] button:hover,
+[data-testid="baseButton-secondary"] button:hover,
+button[data-testid="baseButton-secondary"]:hover,
+button[data-testid="stBaseButton-secondary"]:hover{
+  background:var(--surface-hover) !important;
+  border-color:var(--border-strong) !important;
+  transform:translateY(-1px);
+}
+[data-testid="stBaseButton-secondary"] button:active,
+[data-testid="baseButton-secondary"] button:active{
+  transform:translateY(0);
+}
+[data-testid="stBaseButton-secondary"] button:focus,
+[data-testid="baseButton-secondary"] button:focus{
+  outline:2px solid var(--ring) !important;
+  outline-offset:2px !important;
+}
+
+/* Sidebar buttons: texto blanco (sobre surfaces oscuras) */
+[data-testid="stSidebar"] .stButton>button,
+[data-testid="stSidebar"] .stDownloadButton>button{
   color:#FFFFFF !important;
 }
 
-/* Radios y checkboxes: forzar acento del tema (evita rojos) */
-.stRadio input[type="radio"], input[type="radio"]{
-  accent-color: var(--accent) !important;
-}
-
-/* Pastillas del radiogroup: estado seleccionado sin rojos */
-[role="radiogroup"] label[aria-checked="true"]{
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 2px rgba(37,99,235,.20) !important; /* suave halo del tema */
-}
-
-/* Botón: evitar bordes/halo rojizos en focus/active */
-.stButton > button{
-  border: 1px solid var(--accent) !important;
-}
-.stButton > button:focus-visible{
-  outline: 3px solid rgba(37,99,235,.35) !important;
-  outline-offset: 2px !important;
-}
-
-/* Inputs */
+/* ===== INPUTS ===== */
 .stTextInput>div>div>input,
 .stTextArea textarea,
 .stSelectbox>div>div,
@@ -223,14 +236,12 @@ def inject_theme(mode: str = "dark"):
   outline-offset:2px !important;
   box-shadow:var(--shadow-lg) !important;
 }
+::placeholder{ color:var(--text-disabled) !important; opacity:1; }
 
-/* Placeholder */
-::placeholder{ 
-  color:var(--text-disabled) !important;
-  opacity:1;
+/* Radios/checkboxes: evitar “rojos” del browser */
+.stRadio input[type="radio"], input[type="radio"]{
+  accent-color: var(--accent) !important;
 }
-
-/* Radio group */
 [role="radiogroup"]>div{ gap:0.75rem; }
 [role="radiogroup"] label{
   background:var(--surface) !important;
@@ -243,13 +254,17 @@ def inject_theme(mode: str = "dark"):
   border-color:var(--border-strong) !important;
   background:var(--surface-hover) !important;
 }
+[role="radiogroup"] label[aria-checked="true"]{
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(96,165,250,.20) !important;
+}
 
-/* BRAVO GRID/CARDS (neutras por defecto, sin .primary fija) */
-.bravo-grid{ 
-  display:grid; 
-  grid-template-columns:repeat(3,minmax(0,1fr)); 
-  gap:16px; 
-  margin-top:12px; 
+/* ===== CARDS (resultado) ===== */
+.bravo-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:16px;
+  margin-top:12px;
 }
 @media (max-width:1100px){ .bravo-grid{ grid-template-columns:1fr; } }
 
@@ -262,101 +277,62 @@ def inject_theme(mode: str = "dark"):
   box-shadow:var(--shadow);
   transition:all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.bravo-card:hover{ 
-  transform:translateY(-2px); 
+.bravo-card:hover{
+  transform:translateY(-2px);
   box-shadow:var(--shadow-lg);
   border-color:var(--border-strong);
 }
 .bravo-card .label{
-  font-size:0.85rem; 
-  color:var(--text-muted); 
-  margin-bottom:6px; 
+  font-size:0.85rem;
+  color:var(--text-muted);
+  margin-bottom:6px;
   letter-spacing:0.3px;
   font-weight:500;
   text-transform:uppercase;
 }
-.bravo-card .value{ 
-  font-weight:700; 
-  font-size:1.75rem; 
+.bravo-card .value{
+  font-weight:700;
+  font-size:1.75rem;
   line-height:1.2;
   color:var(--text);
 }
-.bravo-card .sub{ 
-  font-size:0.9rem; 
-  opacity:0.9; 
+.bravo-card .sub{
+  font-size:0.9rem;
   margin-top:6px;
   color:var(--text-secondary);
 }
 
 /* Meta info */
 .bravo-meta{
-  margin:10px 0 14px 0; 
+  margin:10px 0 14px 0;
   padding:12px 14px;
-  background:var(--surface-2); 
+  background:var(--surface-2);
   color:var(--text-secondary);
-  border:1px solid var(--border-strong); 
+  border:1px solid var(--border-strong);
   border-radius:var(--radius);
-  text-align:center; 
-  font-size:1rem; 
+  text-align:center;
+  font-size:1rem;
   font-weight:500;
   box-shadow:var(--shadow);
 }
 
-/* Caja de sesión neutra en sidebar */
-.session-box{
-  margin-top:8px;
-  padding:10px 12px;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-}
-
-/* Dividers & alerts */
+/* Alerts & dividers */
 hr{ border:none; border-top:1px solid var(--border); margin:1.5rem 0; }
 .stAlert{ border-radius:var(--radius) !important; border:1px solid var(--border) !important; }
 
-/* Scrollbar opcional */
+/* Scrollbar (opcional) */
 ::-webkit-scrollbar{ width:10px; height:10px; }
 ::-webkit-scrollbar-track{ background:var(--surface-2); }
 ::-webkit-scrollbar-thumb{ background:var(--border-strong); border-radius:5px; }
 ::-webkit-scrollbar-thumb:hover{ background:var(--text-muted); }
-
-/* Transiciones razonables (evitar parpadeo) */
-*, *::before, *::after{
-  transition-property:background-color, border-color, color, fill, stroke;
-  transition-duration:0.25s;
-  transition-timing-function:ease;
-}
-.stButton>button, .bravo-card, input, textarea, select{
-  transition-property:all;
-  transition-duration:0.2s;
-}
 </style>
 """,
         unsafe_allow_html=True,
     )
 
+# ===== Auth =====
 inject_font_and_base()
-
-from auth import require_login
 require_login(session_hours=3)
-
-# --- Estilos para tarjetas de resultado (estructura base; colores vienen del tema) ---
-st.markdown("""
-<style>
-.bravo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:12px;}
-@media (max-width:1100px){.bravo-grid{grid-template-columns:1fr;}}
-.bravo-card{border-radius:var(--radius);padding:18px;}
-.bravo-card .label{font-size:.85rem;margin-bottom:6px;letter-spacing:.3px;font-weight:500;text-transform:uppercase;}
-.bravo-card .value{font-weight:700;font-size:1.75rem;line-height:1.2;}
-.bravo-card .sub{font-size:.9rem;margin-top:6px;}
-.bravo-meta{margin:10px 0 14px 0;padding:12px 14px;border-radius:var(--radius);text-align:center;font-size:1rem;font-weight:500;}
-</style>
-""", unsafe_allow_html=True)
-
-# ---- Estado inicial ----
-if "last_quote" not in st.session_state:
-    st.session_state["last_quote"] = None
 
 # ===== Importar parser =====
 try:
@@ -372,9 +348,6 @@ except Exception as e:
     _pricing = None
     st.warning(f"No se pudo importar pricing.py (se usará cálculo básico): {e}")
 
-HERE = Path(__file__).parent
-CATALOG_PATH = HERE / "catalog.json"
-
 # ===== Utilidades =====
 def money(x: float) -> str:
     return f"{x:,.2f}"
@@ -387,9 +360,11 @@ def load_catalog_safely() -> Dict[str, Any]:
             return _pricing.load_catalog()
         except Exception:
             pass
+
     if not CATALOG_PATH.exists():
         st.error(f"No se encontró catalog.json en {CATALOG_PATH}")
         st.stop()
+
     with open(CATALOG_PATH, "r", encoding="utf-8") as fh:
         return json.load(fh)
 
@@ -399,6 +374,7 @@ def scen_from(catalog: Dict[str, Any], adjusted_usd: float) -> Dict[str, float]:
             return _pricing.to_scenarios(catalog, adjusted_usd)
         except Exception:
             pass
+
     S = catalog.get("escenarios", {})
     minimo = float(S.get("minimo", 0.85))
     logico = float(S.get("logico", 1.0))
@@ -419,9 +395,9 @@ def expand_entregables_por_nivel(items_por_nivel: dict, nivel_objetivo: str):
             break
 
     def _canon(txt: str) -> str:
-        t = re.sub(r"\s*\([^)]*\)", "", txt)   # quita lo entre paréntesis
-        t = t.strip().rstrip(".")              # quita espacios y punto final
-        t = re.sub(r"\s+", " ", t)             # colapsa espacios
+        t = re.sub(r"\s*\([^)]*\)", "", txt)
+        t = t.strip().rstrip(".")
+        t = re.sub(r"\s+", " ", t)
         return t.lower()
 
     vistos = set()
@@ -438,13 +414,7 @@ def to_cop_local(rate: float, usd: float) -> int:
         r = float(rate)
     except Exception:
         r = 4300.0
-    return int(round(usd * r, 0))
-
-def to_ars_local(usd: float, usd_to_ars: float) -> int:
-    try:
-        return int(round(float(usd) * float(usd_to_ars)))
-    except Exception:
-        return 0
+    return int(round(float(usd) * r, 0))
 
 # ===== Helpers de niveles =====
 def _nearly(x: float, target: float, tol: float = 0.05) -> bool:
@@ -459,16 +429,20 @@ def _level_for(mod: str, weight: float) -> str:
     if mod == "B":
         return "full" if weight >= 0.9 else "lite"
     if mod == "C":
-        if _nearly(weight, 1.0): return "full"
-        if _nearly(weight, 0.8): return "rebranding"
-        if _nearly(weight, 0.5): return "refresh"
+        if _nearly(weight, 1.0):
+            return "full"
+        if _nearly(weight, 0.8):
+            return "rebranding"
+        if _nearly(weight, 0.5):
+            return "refresh"
         return "full" if weight > 0.8 else ("rebranding" if weight > 0.6 else "refresh")
     if mod == "D":
         return "full" if weight >= 0.9 else "lite"
     if mod == "E":
-        if _nearly(weight, 1.5): return "plus"
-        if weight >= 1.4: return "plus"
-        if weight >= 0.9: return "full"
+        if _nearly(weight, 1.5) or weight >= 1.4:
+            return "plus"
+        if weight >= 0.9:
+            return "full"
         return "lite"
     return "full"
 
@@ -478,6 +452,7 @@ def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
     orden = ["A", "B", "C", "D", "E"]
     items: list[str] = []
     seen = set()
+
     for mod in orden:
         w = mod_weights.get(mod)
         try:
@@ -486,6 +461,7 @@ def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
             continue
         if not w or w <= 0:
             continue
+
         lvl = _level_for(mod, w)
         for txt in DELIVERABLES.get(mod, {}).get(lvl, []):
             if txt not in seen:
@@ -496,7 +472,9 @@ def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
 # ===== Normalización por keywords =====
 def _normalize_txt(s: str) -> str:
     s = (s or "").lower()
-    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+    )
 
 def infer_mod_weights_from_brief(brief: str) -> tuple[Dict[str, float], list]:
     t = _normalize_txt(brief)
@@ -504,31 +482,42 @@ def infer_mod_weights_from_brief(brief: str) -> tuple[Dict[str, float], list]:
     reasons: list[str] = []
 
     if any(k in t for k in ["refresh", "ajuste menor", "ajustes menores", "tweaks", "retocar", "ligero refresh", "refresh de identidad"]):
-        w["C"] = 0.5; reasons.append("C→refresh (0.5) por keywords de refresh/ajustes menores.")
+        w["C"] = 0.5
+        reasons.append("C→refresh (0.5) por keywords de refresh/ajustes menores.")
     elif any(k in t for k in ["rebranding", "restyling", "evolucion de marca", "evolución de marca", "ajuste de logo", "optimizar logo", "modernizar logo"]):
-        w["C"] = 0.8; reasons.append("C→rebranding (0.8) por keywords de rebranding/evolución/ajuste de logo.")
+        w["C"] = 0.8
+        reasons.append("C→rebranding (0.8) por keywords de rebranding/evolución/ajuste de logo.")
     elif any(k in t for k in ["desde cero", "identidad completa", "logo nuevo", "naming", "sistema tipografico", "sistema tipográfico", "lenguaje visual completo"]):
-        w["C"] = 1.0; reasons.append("C→full (1.0) por keywords de identidad completa/desde cero.")
+        w["C"] = 1.0
+        reasons.append("C→full (1.0) por keywords de identidad completa/desde cero.")
 
     if any(k in t for k in ["manual basico", "manual básico", "lite", "guia rapida", "guía rápida", "mini manual"]):
-        w["D"] = 0.6; reasons.append("D→lite (0.6) por keywords de manual básico/lite.")
+        w["D"] = 0.6
+        reasons.append("D→lite (0.6) por keywords de manual básico/lite.")
     elif any(k in t for k in ["manual completo", "brandbook full", "manual full"]):
-        w["D"] = 1.0; reasons.append("D→full (1.0) por keywords de manual completo.")
+        w["D"] = 1.0
+        reasons.append("D→full (1.0) por keywords de manual completo.")
 
     if any(k in t for k in ["dna lite", "estrategia lite", "sintesis", "síntesis", "resumen", "enfoque sintesis", "enfoque síntesis"]):
-        w["B"] = 0.65; reasons.append("B→lite (0.65) por keywords de síntesis/lite.")
+        w["B"] = 0.65
+        reasons.append("B→lite (0.65) por keywords de síntesis/lite.")
     elif any(k in t for k in ["dna full", "estrategia completa", "territorios completos", "manifiesto"]):
-        w["B"] = 1.0; reasons.append("B→full (1.0) por keywords de estrategia completa/manifiesto.")
+        w["B"] = 1.0
+        reasons.append("B→full (1.0) por keywords de estrategia completa/manifiesto.")
 
     if any(k in t for k in ["mas de 10", "más de 10", "muchas aplicaciones", "motion", "banners html", "lote grande"]):
-        w["E"] = 1.5; reasons.append("E→plus (1.5) por keywords de volumen alto/motion/HTML.")
+        w["E"] = 1.5
+        reasons.append("E→plus (1.5) por keywords de volumen alto/motion/HTML.")
     elif any(k in t for k in ["hasta 10", "10 piezas", "template de presentacion", "template de presentación"]):
-        w["E"] = 1.0; reasons.append("E→full (1.0) por keywords de hasta 10 piezas/template.")
+        w["E"] = 1.0
+        reasons.append("E→full (1.0) por keywords de hasta 10 piezas/template.")
     elif any(k in t for k in ["hasta 5", "kit rrss", "kit redes", "piezas simples"]):
-        w["E"] = 0.6; reasons.append("E→lite (0.6) por keywords de bajo volumen/kit rrss.")
+        w["E"] = 0.6
+        reasons.append("E→lite (0.6) por keywords de bajo volumen/kit rrss.")
 
     if any(k in t for k in ["research", "benchmark", "descubrimiento", "auditoria", "auditoría"]):
-        w.setdefault("A", 1.0); reasons.append("A→base (1.0) por keywords de research/benchmark.")
+        w.setdefault("A", 1.0)
+        reasons.append("A→base (1.0) por keywords de research/benchmark.")
 
     return w, reasons
 
@@ -536,13 +525,16 @@ def merge_weights(parser_weights: Dict[str, float], inferred: Dict[str, float]) 
     pw = dict(parser_weights or {})
     if not inferred:
         return pw
+
     parser_all_full = False
     if pw:
         vals = [float(v) for v in pw.values() if v is not None]
         parser_all_full = len(vals) > 0 and all(abs(v - 1.0) < 1e-6 for v in vals)
+
     for m, v in inferred.items():
         if m not in pw or not pw[m] or float(pw[m]) == 0.0:
-            pw[m] = v; continue
+            pw[m] = v
+            continue
         if abs(v - 1.0) > 1e-6:
             pw[m] = v
         else:
@@ -550,21 +542,24 @@ def merge_weights(parser_weights: Dict[str, float], inferred: Dict[str, float]) 
                 pw[m] = v
     return pw
 
-# === PDF / wkhtmltopdf helpers ===
+# ===== PDF / wkhtmltopdf helpers =====
 def _pdfkit_config():
     env_path = os.environ.get("WKHTMLTOPDF_PATH")
     if env_path and os.path.exists(env_path):
         return pdfkit.configuration(wkhtmltopdf=env_path)
+
     which_path = shutil.which("wkhtmltopdf")
     if which_path:
         return pdfkit.configuration(wkhtmltopdf=which_path)
+
     for p in ["/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"]:
         if os.path.exists(p):
             return pdfkit.configuration(wkhtmltopdf=p)
+
     raise OSError(
         "wkhtmltopdf no está instalado en el entorno. "
-        "En Streamlit Cloud, agregá un archivo 'packages.txt' con la línea 'wkhtmltopdf' "
-        "y redeploy. Localmente, instalalo según tu sistema."
+        "En Streamlit Cloud, agregá un archivo 'packages.txt' con la línea 'wkhtmltopdf' y redeploy. "
+        "Localmente, instalalo según tu sistema."
     )
 
 def _safe_filename(s: str) -> str:
@@ -584,19 +579,16 @@ def _build_quote_context_from_session(rate_display: float, rate_ars_display: flo
         brief=q.get("brief", ""),
         scenario_name=choice,
         amount_usd=amount,
-
         rate_cop=float(rate_display or 0),
         rate_ars=float(rate_ars_display or 0),
-
         pdf_currency=pdf_currency,
-
         mod_weights=q.get("mod_weights", q.get("modulos_pesos", {})),
         coefs=q.get("coefs", {}),
         estudio_nombre="This is Bravo",
         estudio_web="www.thisisbravo.co",
         estudio_mail="hola@thisisbravo.co",
         studio_logo_url="https://thisisbravo.co/wp-content/uploads/2025/11/logo.png",
-        primary_hex="#C0B7F9",
+        primary_hex="#6B4FC1",
         secondary_hex="#F4D4BD",
         validity_days=30,
         payment_terms="50% al inicio del proyecto. 50% restante contra entrega de los materiales.",
@@ -614,25 +606,30 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
             q["cliente_nombre"],
             q["cliente_tipo"], q["urgencia"], q["complejidad"], q["idiomas"],
             q["stakeholders"], q["relacion"], q["brief"],
-            q["base_usd"], q["adjusted_usd"], q["minimo"], q["logico"], q["maximo"]
+            q["base_usd"], q["adjusted_usd"], q["minimo"], q["logico"], q["maximo"],
+            tasa_cop_usd=rate_display,
         )
         if not ok:
             return False
 
-        # Contexto + HTML principal del PDF
         ctx = _build_quote_context_from_session(rate_display, rate_ars_display)
         body_html = render_quote_html(**ctx)
 
-        # Footer local temporal
-        tmp_dir = Path("tmp_assets"); tmp_dir.mkdir(exist_ok=True)
+        tmp_dir = Path("tmp_assets")
+        tmp_dir.mkdir(exist_ok=True)
+
         footer_html = render_quote_footer_html(
             estudio_nombre=ctx.get("estudio_nombre", "This is Bravo"),
             estudio_web=ctx.get("estudio_web", "www.thisisbravo.co"),
             estudio_mail=ctx.get("estudio_mail", "hola@thisisbravo.co"),
         )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8", dir=tmp_dir) as tmp_footer:
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".html", delete=False, encoding="utf-8", dir=tmp_dir
+        ) as tmp_footer:
             tmp_footer.write(footer_html)
             footer_path = tmp_footer.name
+
         footer_url = "file://" + footer_path
 
         options = {
@@ -646,25 +643,31 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
             "footer-spacing": "5",
             "enable-local-file-access": "",
             "load-error-handling": "ignore",
-            "custom-header": [("User-Agent","Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36")],
+            "custom-header": [(
+                "User-Agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36"
+            )],
+            "allow": str(tmp_dir.resolve()),
         }
-        options["allow"] = str(tmp_dir.resolve())
 
         pdf_bytes = pdfkit.from_string(
             body_html,
             False,
             configuration=_pdfkit_config(),
-            options=options
+            options=options,
         )
 
         st.session_state["last_pdf_bytes"] = pdf_bytes
         fecha = datetime.now().strftime("%Y%m%d")
         cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
         st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
+
         try:
-            if os.path.exists(footer_path): os.unlink(footer_path)
+            if os.path.exists(footer_path):
+                os.unlink(footer_path)
         except Exception:
             pass
+
         return True
 
     except Exception as e:
@@ -673,7 +676,7 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
         st.error(traceback.format_exc())
         return False
 
-# ===== Tasa de cambio en vivo (COP + ARS) con fallbacks y cache =====
+# ===== Tasa de cambio en vivo (COP + ARS) =====
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
     """Devuelve (rates_dict, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None.
@@ -711,11 +714,35 @@ def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
 
     return None
 
+# ===== Google Sheets =====
+def _sheet_client():
+    creds_info = dict(st.secrets["gcp_service_account"])
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
+    gc = gspread.authorize(creds)
+    return gc, creds.service_account_email
+
 def save_quote_to_sheets(
     cliente_nombre: str,
-    cliente_tipo: str, urgencia: str, complejidad: str, idiomas: int,
-    stakeholders: str, relacion: str, brief: str,
-    base_usd: float, adjusted_usd: float, minimo: float, logico: float, maximo: float
+    cliente_tipo: str,
+    urgencia: str,
+    complejidad: str,
+    idiomas: int,
+    stakeholders: str,
+    relacion: str,
+    brief: str,
+    base_usd: float,
+    adjusted_usd: float,
+    minimo: float,
+    logico: float,
+    maximo: float,
+    *,
+    tasa_cop_usd: float,
 ) -> bool:
     try:
         gc, _ = _sheet_client()
@@ -744,7 +771,7 @@ def save_quote_to_sheets(
             "Min USD": "minimo_usd",
             "Base USD": "logico_usd",
             "Max USD": "maximo_usd",
-            "Cotización elegida": "monto_elegido_usd",
+            "Cotización elegida": "monto_elegido_usd",  # por compatibilidad si existiera
             "tasa_cop_usd_usada": "tasa_cop_usd_usada",
             "Notas": "notas",
             "Cotizacion final": "cotizacion_final_usd",
@@ -754,7 +781,6 @@ def save_quote_to_sheets(
         }
 
         local_now = datetime.now()
-        tasa = globals().get("rate_display", 0)
 
         payload = {
             "created_local": local_now.isoformat(timespec="seconds"),
@@ -762,18 +788,19 @@ def save_quote_to_sheets(
             "cliente_tipo": cliente_tipo,
             "brief": (brief or "").strip(),
             "base_usd": float(base_usd),
-            "ajustado_usd": float(adjusted_usd),
+            "ajustado_usd": float(adjusted_usd),  # no se escribe si no hay header, pero lo conservamos
             "minimo_usd": float(minimo),
             "logico_usd": float(logico),
             "maximo_usd": float(maximo),
-            "tasa_cop_usd_usada": float(tasa) if tasa else 0,
+            "tasa_cop_usd_usada": float(tasa_cop_usd or 0),
             "notas": "",
             "cotizacion_final_usd": "",
         }
 
         choice = st.session_state.get("selected_quote_name", "")
         chosen_usd = float(st.session_state.get("selected_quote_amount") or 0)
-        chosen_cop = to_cop_local(globals().get("rate_display", 0), chosen_usd)
+        chosen_cop = to_cop_local(tasa_cop_usd, chosen_usd)
+
         payload.update({
             "escenario_elegido": choice,
             "monto_elegido_usd": chosen_usd,
@@ -785,35 +812,30 @@ def save_quote_to_sheets(
             key = header_to_payload_key.get(h)
             row.append(payload.get(key, ""))
 
-        # ------------------------------------------------------------
         # Escribir SIEMPRE en la primera fila vacía real (ignorando formato)
         # usando Col A (Fecha) como ancla y considerando fórmulas como "ocupado".
-        # ------------------------------------------------------------
         from gspread.utils import rowcol_to_a1
 
-        max_rows = ws.row_count  # normalmente 1000 en tu hoja
-        col_a_values = ws.get(f"A1:A{max_rows}")  # valores calculados
-        col_a_formulas = ws.get(f"A1:A{max_rows}", value_render_option="FORMULA")  # detecta '='
+        max_rows = ws.row_count  # normalmente 1000
+        col_a_values = ws.get(f"A1:A{max_rows}")
+        col_a_formulas = ws.get(f"A1:A{max_rows}", value_render_option="FORMULA")
 
         last_used = 1  # header
         for i in range(2, max_rows + 1):
             v = (col_a_values[i - 1][0] if i - 1 < len(col_a_values) and col_a_values[i - 1] else "")
             f = (col_a_formulas[i - 1][0] if i - 1 < len(col_a_formulas) and col_a_formulas[i - 1] else "")
 
-            # normalización para evitar "espacios invisibles"
             v_norm = str(v).replace("\u00a0", " ").strip()
             f_norm = str(f).strip()
 
-            # Si hay valor real o hay fórmula, la fila cuenta como ocupada
             if v_norm != "" or (f_norm.startswith("=") and f_norm != "="):
                 last_used = i
 
         next_row = last_used + 1
-
         start = rowcol_to_a1(next_row, 1)
         end = rowcol_to_a1(next_row, len(headers))
-        ws.update(f"{start}:{end}", [row], value_input_option="USER_ENTERED")
 
+        ws.update(f"{start}:{end}", [row], value_input_option="USER_ENTERED")
         return True
 
     except gspread.SpreadsheetNotFound:
@@ -821,25 +843,8 @@ def save_quote_to_sheets(
     except Exception as e:
         st.exception(e)
     return False
-def _sheet_client():
-    creds_info = dict(st.secrets["gcp_service_account"])
-    creds = service_account.Credentials.from_service_account_info(
-        creds_info,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    gc = gspread.authorize(creds)
-    return gc, creds.service_account_email
 
-def test_sheets_connection() -> dict:
-    gc, sa_email = _sheet_client()
-    sh = gc.open_by_key(SHEET_ID)
-    ws = sh.worksheet(WORKSHEET_NAME)
-    headers = ws.row_values(1)
-    return {"service_account": sa_email, "title": sh.title, "worksheet": ws.title, "headers": headers}
-
+# ===== Cálculo de cotización (fallback si falta pricing.py) =====
 def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
     if _pricing and hasattr(_pricing, "compute_quote") and callable(_pricing.compute_quote):
         try:
@@ -850,41 +855,49 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
     mods_cfg = catalog.get("modulos", {})
     weights: Dict[str, float] = features.get("modulos_pesos", {})
     base = 0.0
+
     for m, w in weights.items():
         cfg = mods_cfg.get(m, {})
         price = float(cfg.get("precio_base_usd", 0.0))
         if m == "E" and float(w) >= 1.0:
             price = min(price, 600.0)
         base += price * float(w)
+
     base = round(base, 2)
 
     def _normalize(s: str) -> str:
         s = str(s).strip().lower()
-        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
     def keymatch(d: dict, key: str, default=1.0):
-        if not isinstance(d, dict): return default
+        if not isinstance(d, dict):
+            return default
         key_n = _normalize(key)
         for k, v in d.items():
-            if _normalize(k) == key_n: return v
+            if _normalize(k) == key_n:
+                return v
         return d.get(key, default)
 
     C = catalog.get("coeficientes", {})
     c_cliente = float(keymatch(C.get("cliente", {}), features.get("cliente_tipo", "PyME"), 1.0))
-    c_urg     = float(keymatch(C.get("urgencia", {}), features.get("urgencia", "Normal"), 1.0))
-    c_comp    = float(keymatch(C.get("complejidad", {}), features.get("complejidad", "Media"), 1.0))
-    c_rel     = float(keymatch(C.get("relacion", {}),   features.get("relacion", "Nuevo"), 1.0))
+    c_urg = float(keymatch(C.get("urgencia", {}), features.get("urgencia", "Normal"), 1.0))
+    c_comp = float(keymatch(C.get("complejidad", {}), features.get("complejidad", "Media"), 1.0))
+    c_rel = float(keymatch(C.get("relacion", {}), features.get("relacion", "Nuevo"), 1.0))
 
     idiomas_total = int(features.get("idiomas", 1))
-    c_id_base  = float(C.get("idiomas", {}).get("base", 1.0))
+    c_id_base = float(C.get("idiomas", {}).get("base", 1.0))
     c_id_extra = float(C.get("idiomas", {}).get("extra", 0.0))
     c_id = c_id_base + max(0, idiomas_total - 1) * c_id_extra
 
     stks = features.get("stakeholders", "uno")
     st_map = C.get("stakeholders", {})
     if isinstance(stks, int):
-        if stks <= 1: c_st = 1.0
-        elif stks == 2: c_st = float(keymatch(st_map, "dos", 1.04))
-        else: c_st = float(keymatch(st_map, "tres_o_mas", 1.08))
+        if stks <= 1:
+            c_st = 1.0
+        elif stks == 2:
+            c_st = float(keymatch(st_map, "dos", 1.04))
+        else:
+            c_st = float(keymatch(st_map, "tres_o_mas", 1.08))
     else:
         c_st = float(keymatch(st_map, stks, 1.0))
 
@@ -919,23 +932,21 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
         "rate": rate,
     }
 
-# ---------- Render helpers ----------
+# ===== Render UI helpers =====
 def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_display, rate_ars_display):
     st.markdown(
         f"<div class='bravo-meta'><b>Tarifa base: US$</b> {base_usd:,.2f}</div>",
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     usd_min = f"USD {minimo:,.2f}"
     usd_log = f"USD {logico:,.2f}"
     usd_max = f"USD {maximo:,.2f}"
 
-    # COP
     cop_min = f"~ COP {to_cop_local(rate_display, minimo):,}"
     cop_log = f"~ COP {to_cop_local(rate_display, logico):,}"
     cop_max = f"~ COP {to_cop_local(rate_display, maximo):,}"
 
-    # ARS (si no hay tasa, mostramos N/D)
     if rate_ars_display and float(rate_ars_display) > 0:
         ars_min = f"~ ARS {int(round(float(minimo) * float(rate_ars_display))):,}"
         ars_log = f"~ ARS {int(round(float(logico) * float(rate_ars_display))):,}"
@@ -945,7 +956,6 @@ def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_dis
         ars_log = "~ ARS N/D"
         ars_max = "~ ARS N/D"
 
-    # NOTA: sin .primary fija — las 3 cards quedan neutras
     st.markdown(
         f"""
 <div class="bravo-grid">
@@ -988,6 +998,7 @@ def render_catalog_summary(catalog: Dict[str, Any]):
         st.markdown(f"- D (Brandbook): **Full {d_full:,.2f}** · Lite {d_lite:,.2f}**")
         st.markdown(f"- E (Implementación): **Full {e_full:,.2f} · Lite {e_lite:,.2f} · Plus {e_plus:,.2f}**  _(tope full = 600)_")
         return
+
     mods = catalog.get("modulos", {})
     a = float(mods.get("A", {}).get("precio_base_usd", 0))
     b = float(mods.get("B", {}).get("precio_base_usd", 0))
@@ -1016,7 +1027,7 @@ def render_quote_html(
     estudio_web: str = "www.thisisbravo.co",
     estudio_mail: str = "hola@thisisbravo.co",
     studio_logo_url: str = "https://thisisbravo.co/wp-content/uploads/2025/11/logo.png",
-    primary_hex: str = "#C0B7F9",
+    primary_hex: str = "#6B4FC1",
     secondary_hex: str = "#F4D4BD",
     deliverables: Optional[list] = None,
     payment_terms: str = "50% al inicio del proyecto. 50% restante contra entrega de los materiales.",
@@ -1041,19 +1052,12 @@ def render_quote_html(
 
     pdf_currency = (pdf_currency or "USD").upper()
 
-    # Línea principal (la que se verá grande)
     if pdf_currency == "COP":
         scenario_amount_main = f"COP {amount_cop:,}"
-        sub1 = f"~ USD {amount_usd:,.2f}"
-        sub2 = f"~ ARS {amount_ars:,}" if amount_ars else "~ ARS N/D"
     elif pdf_currency == "ARS":
         scenario_amount_main = f"ARS {amount_ars:,}" if amount_ars else "ARS N/D"
-        sub1 = f"~ USD {amount_usd:,.2f}"
-        sub2 = f"~ COP {amount_cop:,}"
-    else:  # USD
+    else:
         scenario_amount_main = f"USD {amount_usd:,.2f}"
-        sub1 = f"~ COP {amount_cop:,}"
-        sub2 = f"~ ARS {amount_ars:,}" if amount_ars else "~ ARS N/D"
 
     # PDF para cliente: mostrar solo la moneda principal
     sub1 = ""
@@ -1074,10 +1078,9 @@ def render_quote_html(
             continue
         if w <= 0:
             continue
-        nivel = {1.0: "full", 0.8: "rebranding", 0.65: "lite", 0.6: "lite", 0.5: "refresh", 1.5: "plus"}.get(round(w,2), f"{w}×")
+        nivel = {1.0: "full", 0.8: "rebranding", 0.65: "lite", 0.6: "lite", 0.5: "refresh", 1.5: "plus"}.get(round(w, 2), f"{w}×")
         breakdown.append({"modulo": k, "nombre": etiquetas.get(k, k), "nivel": nivel})
 
-    # Entregables expandidos por acción y nivel
     acciones_expand = []
     for b in breakdown:
         k = b.get("modulo")
@@ -1122,7 +1125,7 @@ def render_quote_html(
             acciones_expand.append({"accion": nombre_accion, "entregables": entregables_expand})
 
     env = Environment(
-        loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
+        loader=FileSystemLoader(str(HERE / "templates")),
         autoescape=select_autoescape(["html", "xml"]),
         trim_blocks=True,
         lstrip_blocks=True,
@@ -1162,7 +1165,7 @@ def render_quote_footer_html(
     **kwargs
 ) -> str:
     env = Environment(
-        loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
+        loader=FileSystemLoader(str(HERE / "templates")),
         autoescape=select_autoescape(["html", "xml"]),
         trim_blocks=True,
         lstrip_blocks=True,
@@ -1177,9 +1180,27 @@ def render_quote_footer_html(
     }
     return tpl.render(**context)
 
-# ===== Sidebar =====
+# ===== Estado base =====
+if "last_quote" not in st.session_state:
+    st.session_state["last_quote"] = None
+
+def clear_quote_state() -> None:
+    # Inputs y parámetros
+    for k in [
+        "cliente_nombre", "brief_text",
+        "f_cliente_tipo", "f_urgencia", "f_complejidad", "f_idiomas", "f_stakeholders", "f_relacion",
+        # Resultado / selección
+        "last_quote", "selected_quote_name", "selected_quote_amount",
+        "quote_choice_radio", "pdf_currency",
+        # PDF
+        "last_pdf_bytes", "last_pdf_name",
+    ]:
+        st.session_state.pop(k, None)
+
+# ===== Cargar catálogo =====
 catalog = load_catalog_safely()
 
+# ===== Sidebar: tasas + tema =====
 # Fallbacks desde catálogo (COP existe seguro; ARS es opcional)
 catalog_rate_cop = float(
     catalog.get("moneda", {}).get("usd_to_cop", catalog.get("cop_per_usd", catalog.get("tasa_cop", 4300)))
@@ -1189,22 +1210,35 @@ catalog_rate_ars = float(catalog.get("moneda", {}).get("usd_to_ars", 0) or 0)
 live = get_live_usd_rates()
 if live:
     rates, rate_source = live
-    rate_display = float(rates.get("COP", catalog_rate_cop) or catalog_rate_cop)  # COP (se mantiene como "rate_display")
-    rate_ars_display = float(rates.get("ARS", catalog_rate_ars) or catalog_rate_ars)  # ARS
+    rate_display = float(rates.get("COP", catalog_rate_cop) or catalog_rate_cop)
+    rate_ars_display = float(rates.get("ARS", catalog_rate_ars) or catalog_rate_ars)
 else:
     rate_display = catalog_rate_cop
     rate_ars_display = catalog_rate_ars
     rate_source = "catálogo (fallback)"
 
-st.sidebar.header("Tasa de cambio")
-ars_line = f"**{money(rate_ars_display)} ARS / USD**" if rate_ars_display else "**ARS / USD: N/D**"
-st.sidebar.caption(
-    f"**{money(rate_display)} COP / USD**  \n"
-    f"{ars_line}  \n"
-)
+with st.sidebar:
+    st.header("Tasa de cambio")
+    ars_line = f"**{money(rate_ars_display)} ARS / USD**" if rate_ars_display else "**ARS / USD: N/D**"
+    st.caption(
+        f"**{money(rate_display)} COP / USD**  \n"
+        f"{ars_line}  \n"
+        f"Fuente: {rate_source}"
+    )
+
+    st.divider()
+
+    if "theme_dark" not in st.session_state:
+        st.session_state["theme_dark"] = True
+    st.toggle("Modo oscuro", key="theme_dark")
+    theme_mode = "dark" if st.session_state["theme_dark"] else "light"
+
+# Inyectar tema según toggle
+inject_theme(theme_mode)
 
 # ===== UI principal =====
 st.title("Cotizador — This is Bravo")
+
 hint_box = st.empty()
 if not st.session_state.get("last_quote"):
     hint_box.info("Cargá un brief y presioná **Calcular** para ver resultados.")
@@ -1223,7 +1257,12 @@ with left_col:
             placeholder="Ej: Re-branding regional, manual de identidad full, pack de 12 piezas, listo en 3 semanas…",
             key="brief_text",
         )
-    calcular = st.button("Calcular", key="btn_calcular")
+
+    btn_col1, btn_col2, spacer = st.columns([1, 1, 6], gap="small")
+    with btn_col1:
+        calcular = st.button("Calcular", key="btn_calcular", type="primary")
+    with btn_col2:
+        reset = st.button("Limpiar", key="btn_reset", type="secondary")
 
 with right_col:
     st.markdown("### Parámetros")
@@ -1233,7 +1272,7 @@ with right_col:
             "Tipo de cliente",
             ["Corporativo", "Regional", "PyME", "Emprendimiento", "Startup", "Fundacion"],
             index=2,
-            help="Afecta el coeficiente según el tipo de organización.",
+            help="Tipo y tamaño de la organización",
             key="f_cliente_tipo",
         )
     with c2:
@@ -1241,7 +1280,7 @@ with right_col:
             "Urgencia",
             ["Normal", "Rapida", "Express"],
             index=0,
-            help="Coeficiente por urgencia del proyecto.",
+            help="Nivel de urgencia del proyecto",
             key="f_urgencia",
         )
     c3, c4 = st.columns(2)
@@ -1250,14 +1289,14 @@ with right_col:
             "Complejidad",
             ["Baja", "Media", "Alta"],
             index=1,
-            help="Complejidad técnica/organizativa estimada.",
+            help="Complejidad técnica del proyecto",
             key="f_complejidad",
         )
     with c4:
         idiomas = st.number_input(
             "Idiomas (total)",
             min_value=1, max_value=10, value=1, step=1,
-            help="Total de idiomas a producir.",
+            help="Total de idiomas a producir",
             key="f_idiomas",
         )
     c5, c6 = st.columns(2)
@@ -1267,7 +1306,7 @@ with right_col:
             ["uno", "dos", "tres_o_mas"],
             index=0,
             format_func=lambda x: {"uno": "1", "dos": "2", "tres_o_mas": "3+"}.get(x, x),
-            help="Cantidad de decisores/instancias de aprobación.",
+            help="Número de instancias de aprobación.",
             key="f_stakeholders",
         )
     with c6:
@@ -1275,40 +1314,16 @@ with right_col:
             "Relación",
             ["Nuevo", "Recurrente"],
             index=0,
-            help="Clientes recurrentes suelen tener ajuste.",
+            help="Tipo de relación con el cliente",
             key="f_relacion",
         )
 
-# === Sidebar utilidades ===
-with st.sidebar:
-    if st.button("Probar conexión"):
-        try:
-            _ = test_sheets_connection()
-            st.success("OK")
-        except Exception as e:
-            st.error(f"Falló la conexión: {type(e).__name__}: {e}")
+if reset:
+    clear_quote_state()
+    st.rerun()
 
-    if st.button("Reset"):
-        for k in ["last_quote","selected_quote_name","selected_quote_amount","last_pdf_bytes","last_pdf_name"]:
-            st.session_state.pop(k, None)
-        st.rerun()
-
-    st.divider()
-    # Default dark una sola vez
-    if "theme_mode" not in st.session_state:
-        st.session_state["theme_mode"] = "dark"
-    if "theme_dark" not in st.session_state:
-        st.session_state["theme_dark"] = True  # inicia en dark
-
-    st.toggle("Modo oscuro", key="theme_dark")
-    st.session_state["theme_mode"] = "dark" if st.session_state["theme_dark"] else "light"
-
-# Inyectar tema elegido (1 clic)
-inject_theme(st.session_state["theme_mode"])
-
-# --- Contenedores en el orden que queremos ---
+# ===== Secciones (orden controlado) =====
 result_section = st.container()
-save_section = st.container()
 checks_section = st.container()
 
 def render_checks(q: Dict[str, Any]):
@@ -1316,6 +1331,7 @@ def render_checks(q: Dict[str, Any]):
         st.subheader("Comprobaciones")
         etiquetas = {"A": "Research", "B": "Brand DNA", "C": "Creación", "D": "Brandbook", "E": "Implementación"}
         niveles = {1.0: "full", 0.65: "lite", 0.6: "lite", 0.8: "rebranding", 0.5: "refresh", 1.5: "plus"}
+
         partes = []
         for m, w in (q.get("mod_weights") or {}).items():
             try:
@@ -1323,17 +1339,24 @@ def render_checks(q: Dict[str, Any]):
                     partes.append(f"{m}: {etiquetas.get(m, m)} ({niveles.get(round(float(w), 2), f'{w}×')}).")
             except Exception:
                 continue
+
         st.caption("Resumen de etapas detectadas: " + (" • ".join(partes) if partes else "—"))
+
         with st.expander("Detección de módulos", expanded=False):
             st.json(q.get("mod_weights", {}))
             if q.get("reasons"):
                 st.caption("Razones: " + " | ".join(q["reasons"]))
+
         with st.expander("Coeficientes aplicados", expanded=False):
             st.json(q.get("coefs", {}))
 
 def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: float):
     st.subheader("Resultado")
-    render_result_cards(q["minimo"], q["logico"], q["maximo"], q["base_usd"], q["adjusted_usd"], rate_display, rate_ars_display)
+    render_result_cards(
+        q["minimo"], q["logico"], q["maximo"],
+        q["base_usd"], q["adjusted_usd"],
+        rate_display, rate_ars_display
+    )
 
     with st.form("quote_actions"):
         st.markdown("#### Elegí una opción")
@@ -1349,8 +1372,8 @@ def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: f
             key="quote_choice_radio",
             label_visibility="collapsed",
         )
-        
-        pdf_currency = st.selectbox(
+
+        st.selectbox(
             "Moneda del PDF",
             ["USD", "COP", "ARS"],
             index=["USD", "COP", "ARS"].index(st.session_state.get("pdf_currency", "USD")),
@@ -1379,25 +1402,9 @@ def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: f
             key="download_pdf_btn",
         )
 
-# ------ Lógica principal ------
-if left_col and right_col:  # solo para mantener orden mental; no es condición real
-    pass
-
-if 'calcular' not in st.session_state:
-    st.session_state['calcular'] = False
-
+# ===== Lógica principal =====
 if calcular:
-    st.session_state['calcular'] = True
-
-if st.session_state['calcular']:
-    if not st.session_state.get("last_run_with_brief"):
-        # usamos el brief del input actual
-        current_brief = st.session_state.get("brief_text", brief)
-    else:
-        current_brief = st.session_state.get("brief_text", "")
-
-if calcular:
-    if not brief.strip():
+    if not (brief or "").strip():
         st.warning("Escribí un brief para continuar.")
     else:
         st.session_state.pop("last_pdf_bytes", None)
@@ -1416,7 +1423,7 @@ if calcular:
             "complejidad": complejidad,
             "idiomas": int(idiomas),
             "stakeholders": stakeholders,
-            "relacion": relacion
+            "relacion": relacion,
         }
 
         result = safe_compute_quote(catalog, features)
@@ -1450,6 +1457,7 @@ if calcular:
             "coefs": coefs,
             "reasons": reasons,
         }
+
         st.session_state["selected_quote_name"] = st.session_state.get("selected_quote_name", "Lógico")
         st.session_state["selected_quote_amount"] = {
             "Mínimo": minimo, "Lógico": logico, "Máximo": maximo
@@ -1469,30 +1477,5 @@ elif st.session_state.get("last_quote"):
         render_result_ui(q, rate_display, rate_ars_display)
     render_checks(q)
 
-with save_section:
-    pass
-
-# === TEST MANUAL DEL RENDER DE PDF (solo fuera de Streamlit) ===
-def _running_in_streamlit() -> bool:
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        return get_script_run_ctx() is not None
-    except Exception:
-        return False
-
-if __name__ == "__main__" and not _running_in_streamlit():
-    html_test = render_quote_html(
-        cliente_nombre="Fundación En Sol Mayor",
-        brief="Rebranding con nuevo logo, manual e identidad visual.",
-        scenario_name="Lógico",
-        amount_usd=1250.0,
-        rate_cop=4200,
-        mod_weights={"A": 1.0, "B": 1.0, "C": 1.0, "D": 1.0, "E": 0.6},
-        coefs={"cliente": 1.1, "urgencia": 1.0, "complejidad": 1.2},
-    )
-    with open("quote_test.html", "w", encoding="utf-8") as f:
-        f.write(html_test)
-    print("Archivo generado: quote_test.html ✅ (abrilo en el navegador)")
-
-# ---- Resumen catálogo al pie ----
+# ===== Catálogo al pie =====
 render_catalog_summary(catalog)
