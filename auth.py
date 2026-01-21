@@ -114,7 +114,7 @@ def require_login(session_hours: float = SESSION_HOURS_DEFAULT) -> bool:
                 <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:4px;">
                     Sesión:
                 </div>
-                <div style="font-weight:600; color:var(--text);">
+                <div style="font-weight:400; color:var(--text);">
                     {email}
                 </div>
                 </div>
