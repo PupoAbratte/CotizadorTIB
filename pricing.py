@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 # ------------------------
 # Carga de catálogo
@@ -16,7 +16,21 @@ def base_price_usd(catalog: Dict[str, Any], mod_weights: Dict[str, float]) -> fl
     total = 0.0
     for m, w in (mod_weights or {}).items():
         if m == "A":
-            total += P.get("A", 0) * float(w)
+            # Research (A) con 3 niveles evolutivos (según peso):
+            # - 1.0  => R1 Benchmark
+            # - 1.5  => R2 Auditoría
+            # - >=2.0 => R3 Insights (ej: 1500/700 = 2.142857...)
+            fw = float(w)
+
+            if abs(fw - 1.0) < 1e-9:
+                total += P.get("A_benchmark", P.get("A", 0))
+            elif abs(fw - 1.5) < 1e-9:
+                total += P.get("A_audit", P.get("A", 0) * 1.5)
+            elif fw >= 2.0:
+                total += P.get("A_insights", P.get("A", 0) * fw)
+            else:
+                # fallback seguro si llega un peso inesperado
+                total += P.get("A_benchmark", P.get("A", 0))
         elif m == "B":
             # w: 1.0 (full) o 0.65 (lite) viene precalculado en el parser
             base = P.get("B", 0)
@@ -51,6 +65,37 @@ def base_price_usd(catalog: Dict[str, Any], mod_weights: Dict[str, float]) -> fl
                 total += P.get("E_full", 0) * float(w)
         # ignorar claves desconocidas
     return round(total, 2)
+
+# ------------------------
+# Extra naming (solo si C está activo y el brief activó "full + naming")
+# ------------------------
+def naming_addon_usd(catalog: Dict[str, Any], features: Dict[str, Any]) -> float:
+    """
+    Suma un extra por naming cuando:
+    - Módulo C está activo, y
+    - features indica que C es "full + naming" (o has_naming=True si lo usás).
+    """
+    if not isinstance(features, dict):
+        return 0.0
+
+    mod_weights = features.get("modulos_pesos", {}) or {}
+    try:
+        c_w = float(mod_weights.get("C", 0) or 0)
+    except Exception:
+        c_w = 0.0
+
+    if c_w <= 0:
+        return 0.0
+
+    c_base_level = str(features.get("c_base_level", "") or "").strip().lower()
+    has_naming = bool(features.get("has_naming", False))
+
+    # Regla: naming solo cuando explícitamente es "full + naming" o flag has_naming.
+    if (c_base_level == "full + naming") or has_naming:
+        P = catalog.get("precios", {})
+        return float(P.get("C_naming", 0) or 0)
+
+    return 0.0
 
 # ------------------------
 # Bundles (hoy neutros)
@@ -89,7 +134,6 @@ def _overhead_level_key(mod: str, w: float) -> str:
             return "C_rebranding"
         if abs(wf - 0.5) < 1e-9:
             return "C_refresh"
-        # fallback razonable si viniera un peso raro
         return "C_full"
     if mod == "D":
         return "D_lite" if abs(wf - 0.6) < 1e-9 else "D_full"
@@ -99,7 +143,7 @@ def _overhead_level_key(mod: str, w: float) -> str:
         if abs(wf - 0.6) < 1e-9:
             return "E_lite"
         return "E_full"
-    return mod  # fallback
+    return mod
 
 
 def estimate_hours_by_module(catalog: Dict[str, Any], mod_weights: Dict[str, float]) -> Tuple[float, Dict[str, float]]:
@@ -215,7 +259,16 @@ def to_cop(catalog: Dict[str, Any], usd: float) -> int:
 def explain(mod_levels: Dict[str, float], razones: Any, coefs: Dict[str, float]) -> str:
     parts = []
     ml = mod_levels or {}
-    if ml.get("A"): parts.append("A: Research.")
+    if ml.get("A"):
+        a = float(ml["A"])
+        if abs(a - 1.0) < 1e-9:
+            parts.append("A: Research (benchmark).")
+        elif abs(a - 1.5) < 1e-9:
+            parts.append("A: Research (auditoría).")
+        elif a >= 2.0:
+            parts.append("A: Research (insights).")
+        else:
+            parts.append("A: Research.")
     if ml.get("B"):
         parts.append(f"B: Brand DNA ({'lite' if abs(ml['B']-0.65)<1e-9 else 'full'}).")
     if ml.get("C"):
@@ -234,8 +287,17 @@ def explain(mod_levels: Dict[str, float], razones: Any, coefs: Dict[str, float])
 # Orquestador único (usado por app.py)
 # ------------------------
 def compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
-    base = base_price_usd(catalog, features.get("modulos_pesos", {}))
-    base = apply_bundles(catalog, features.get("modulos_pesos", {}), base)
+    mod_weights = features.get("modulos_pesos", {}) if isinstance(features, dict) else {}
+
+    base = base_price_usd(catalog, mod_weights)
+    base = apply_bundles(catalog, mod_weights, base)
+
+    # Extra naming: se suma al base (y por ende le aplican coeficientes y escenarios),
+    # pero NO se "descuenta" por bundles porque lo agregamos después del bundle.
+    addon_naming = naming_addon_usd(catalog, features)
+    if addon_naming:
+        base = round(float(base) + float(addon_naming), 2)
+
     adjusted, coefs = apply_coefs(
         catalog, base,
         features.get("cliente_tipo", "pyme"),
@@ -250,7 +312,7 @@ def compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str
     adjusted_usd_sin_overhead = adjusted
     hours_est, hours_breakdown = estimate_hours_by_module(
         catalog,
-        features.get("modulos_pesos", {})
+        mod_weights
     )
     overhead_rate_usd_h = overhead_rate_usd_per_hour(catalog)
     overhead_usd = overhead_for_quote_usd(catalog, hours_est)
@@ -260,7 +322,7 @@ def compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str
 
     return {
         "base_usd": base,
-        "adjusted_usd": adjusted,  # ahora incluye overhead
+        "adjusted_usd": adjusted,
         "adjusted_usd_sin_overhead": adjusted_usd_sin_overhead,
         "hours_est": hours_est,
         "hours_breakdown": hours_breakdown,
@@ -268,5 +330,6 @@ def compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str
         "overhead_usd": overhead_usd,
         "coefs": coefs,
         "scenarios": to_scenarios(catalog, adjusted),
-        "rate": float(catalog["moneda"]["usd_to_cop"])
+        "rate": float(catalog["moneda"]["usd_to_cop"]),
+        "naming_addon_usd": float(addon_naming or 0.0),
     }

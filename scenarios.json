@@ -12,6 +12,42 @@
     "expected_usd": { "min": 1500, "max": 1700 }
   },
   {
+  "name": "Identidad ONG + R1 Benchmark (A+C+D)",
+  "brief": "Benchmark competitivo (3–5 referentes) para orientar el rediseño. Logotipo, manual de marca y kit básico. Sin ADN/estrategia.",
+  "inputs": {
+    "cliente": "ong",
+    "urgencia": "normal",
+    "complejidad": "media",
+    "idiomas": 1,
+    "stakeholders": 2
+  },
+  "expected_usd": { "min": 2100, "max": 2400 }
+},
+{
+  "name": "Identidad ONG + R2 Auditoría (A+C+D)",
+  "brief": "Auditoría/diagnóstico de marca (estado actual, consistencia y mejoras) + mini benchmark (2–3 comparables) para orientar el rediseño. Logotipo, manual de marca y kit básico. Sin ADN/estrategia.",
+  "inputs": {
+    "cliente": "ong",
+    "urgencia": "normal",
+    "complejidad": "media",
+    "idiomas": 1,
+    "stakeholders": 2
+  },
+  "expected_usd": { "min": 2350, "max": 2700 }
+},
+{
+  "name": "Identidad ONG + R3 Insights (A+C+D)",
+  "brief": "Research de industria/categoría + tendencias + audiencias (segmentación) + desk research y social listening liviano para orientar el rediseño. Logotipo, manual de marca y kit básico. Sin ADN/estrategia.",
+  "inputs": {
+    "cliente": "ong",
+    "urgencia": "normal",
+    "complejidad": "media",
+    "idiomas": 1,
+    "stakeholders": 2
+  },
+  "expected_usd": { "min": 2700, "max": 3100 }
+}
+  {
     "name": "Startup semilla (B+C)",
     "brief": "Definir el nombre, el concepto creativo del sistema y el logotipo. Desarrollo de la base estratégica mínima de marca.",
     "inputs": {

@@ -1,7 +1,7 @@
 # app.py — Cotizador (Streamlit)
-# - UI: Inter + tema accesible con acento #6B4FC1 (dark/light 1-click)
+# - UI: DM Sans + tema accesible con acento #6B4FC1 (dark/light 1-click)
 # - Cotización + guardado en Google Sheets + PDF (wkhtmltopdf)
-# - Código depurado: sin duplicaciones, sin estado “zombie”, reset real, sin globals en sheets
+# - Código depurado: sin parser duplicado por keywords, entregables consistentes via brief_parser.get_deliverables()
 
 import json
 import os
@@ -11,7 +11,7 @@ import tempfile
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List, List
 
 import gspread
 import pdfkit
@@ -21,13 +21,14 @@ from google.oauth2 import service_account
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from auth import require_login
-from brief_parser import DELIVERABLES
+from brief_parser import DELIVERABLES, get_deliverables, detect_module_weights
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
 
 SHEET_ID = st.secrets["SHEET_ID"]
 WORKSHEET_NAME = st.secrets.get("WORKSHEET_NAME", "Quotes")
+DEBUG_UI = bool(st.secrets.get("DEBUG_UI", False))
 
 HERE = Path(__file__).parent
 CATALOG_PATH = HERE / "catalog.json"
@@ -41,7 +42,6 @@ def inject_font_and_base() -> None:
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
-  /* Forzar DM Sans global (pisar Source Sans de Streamlit/emotion) */
   html, body,
   [data-testid="stAppViewContainer"],
   [data-testid="stSidebar"],
@@ -50,12 +50,10 @@ def inject_font_and_base() -> None:
     font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
   }
 
-  /* Mantener monospace donde corresponde */
   code, pre, kbd, samp {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
   }
 
-  /* Ajustes tipográficos */
   h1, h2, h3, h4 { font-weight: 700 !important; }
   h1 { font-size: 2rem !important; }
   h2 { font-size: 1.5rem !important; }
@@ -69,11 +67,6 @@ def inject_font_and_base() -> None:
 
 # ===== Tema accesible (AA) con acento #6B4FC1 =====
 def inject_theme(mode: str = "dark") -> None:
-    """
-    Tema con contraste AA, jerarquía clara y acento #6B4FC1.
-    Hover del acento: #C0B7F9. Radio global: 8px.
-    """
-
     if mode == "dark":
         css_vars = """
 :root{
@@ -217,7 +210,7 @@ button[data-testid="stBaseButton-secondary"]:hover{
   outline-offset:2px !important;
 }
 
-/* Sidebar buttons: texto blanco (sobre surfaces oscuras) */
+/* Sidebar buttons */
 [data-testid="stSidebar"] .stButton>button,
 [data-testid="stSidebar"] .stDownloadButton>button{
   color:#FFFFFF !important;
@@ -252,7 +245,7 @@ button[data-testid="stBaseButton-secondary"]:hover{
 }
 ::placeholder{ color:var(--text-disabled) !important; opacity:1; }
 
-/* Radios/checkboxes: evitar “rojos” del browser */
+/* Radios/checkboxes */
 .stRadio input[type="radio"], input[type="radio"]{
   accent-color: var(--accent) !important;
 }
@@ -273,7 +266,7 @@ button[data-testid="stBaseButton-secondary"]:hover{
   box-shadow: 0 0 0 2px rgba(96,165,250,.20) !important;
 }
 
-/* ===== CARDS (resultado) ===== */
+/* ===== CARDS ===== */
 .bravo-grid{
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
@@ -334,22 +327,11 @@ button[data-testid="stBaseButton-secondary"]:hover{
 hr{ border:none; border-top:1px solid var(--border); margin:1.5rem 0; }
 .stAlert{ border-radius:var(--radius) !important; border:1px solid var(--border) !important; }
 
-/* ===== FIX: evitar que se vea el nombre del ícono (fallback) =====
-   Streamlit/Material Icons a veces renderiza el nombre del ícono como texto
-   (ej: keyboard_double_arrow_left). Esto lo oculta sin romper el toggle.
-*/
-[data-testid="stIconMaterial"]{
-  font-size: 0 !important;
-  line-height: 0 !important;
-}
+/* Fix icon fallback */
+[data-testid="stIconMaterial"]{ font-size: 0 !important; line-height: 0 !important; }
+[data-testid="stIconMaterial"] svg{ font-size: 1rem !important; line-height: 1 !important; }
 
-/* Si el SVG del ícono está presente, mantenelo visible */
-[data-testid="stIconMaterial"] svg{
-  font-size: 1rem !important;
-  line-height: 1 !important;
-}
-
-/* Scrollbar (opcional) */
+/* Scrollbar */
 ::-webkit-scrollbar{ width:10px; height:10px; }
 ::-webkit-scrollbar-track{ background:var(--surface-2); }
 ::-webkit-scrollbar-thumb{ background:var(--border-strong); border-radius:5px; }
@@ -363,12 +345,8 @@ hr{ border:none; border-top:1px solid var(--border); margin:1.5rem 0; }
 inject_font_and_base()
 require_login(session_hours=3)
 
-# ===== Importar parser =====
-try:
-    from brief_parser import detect_module_weights
-except Exception as e:
-    st.error(f"No se pudo importar brief_parser: {e}")
-    st.stop()
+if DEBUG_UI:
+    st.sidebar.caption(f"DEBUG A.lite[0]: {DELIVERABLES['A']['lite'][0]}")
 
 # ===== Importar pricing (opcional, con fallback) =====
 try:
@@ -414,30 +392,6 @@ def scen_from(catalog: Dict[str, Any], adjusted_usd: float) -> Dict[str, float]:
         "maximo": round(adjusted_usd * maximo, 2),
     }
 
-def expand_entregables_por_nivel(items_por_nivel: dict, nivel_objetivo: str):
-    orden = ["lite", "full", "plus"]
-    acumulados = []
-    for n in orden:
-        if n in items_por_nivel and items_por_nivel[n]:
-            acumulados.extend(items_por_nivel[n])
-        if n == nivel_objetivo:
-            break
-
-    def _canon(txt: str) -> str:
-        t = re.sub(r"\s*\([^)]*\)", "", txt)
-        t = t.strip().rstrip(".")
-        t = re.sub(r"\s+", " ", t)
-        return t.lower()
-
-    vistos = set()
-    resultado = []
-    for e in acumulados:
-        k = _canon(e)
-        if k not in vistos:
-            resultado.append(e)
-            vistos.add(k)
-    return resultado
-
 def to_cop_local(rate: float, usd: float) -> int:
     try:
         r = float(rate)
@@ -454,33 +408,187 @@ def _nearly(x: float, target: float, tol: float = 0.05) -> bool:
 
 def _level_for(mod: str, weight: float) -> str:
     if mod == "A":
-        return "base"
+        # Research: 1.0=lite (benchmark), 1.5=full (auditoría), >=2.0=plus (insights)
+        if _nearly(weight, 1.0): return "lite"
+        if _nearly(weight, 1.5): return "full"
+        if weight >= 2.0: return "plus"
+        return "lite"
     if mod == "B":
+        # B: 0.65 lite / 1.0 full (plus existe en librería, pero hoy no lo devolvés por parser)
         return "full" if weight >= 0.9 else "lite"
     if mod == "C":
-        if _nearly(weight, 1.0):
-            return "full"
-        if _nearly(weight, 0.8):
-            return "rebranding"
-        if _nearly(weight, 0.5):
-            return "refresh"
+        # C: 0.5 refresh / 0.8 rebranding / 1.0 full (naming se decide aparte)
+        if _nearly(weight, 1.0): return "full"
+        if _nearly(weight, 0.8): return "rebranding"
+        if _nearly(weight, 0.5): return "refresh"
         return "full" if weight > 0.8 else ("rebranding" if weight > 0.6 else "refresh")
     if mod == "D":
+        # D: 0.6 lite / 1.0 full
         return "full" if weight >= 0.9 else "lite"
     if mod == "E":
-        if _nearly(weight, 1.5) or weight >= 1.4:
-            return "plus"
-        if weight >= 0.9:
-            return "full"
+        # E: 0.6 lite / 1.0 full / 1.5 plus
+        if weight >= 1.4: return "plus"
+        if weight >= 0.9: return "full"
         return "lite"
     return "full"
 
-def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
+def _normalize_txt(s: str) -> str:
+    s = (s or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+def infer_c_base_level(brief: str) -> str:
+    """
+    Decide si C debe ir como:
+    - "full" (sin naming)
+    - "full + naming" (con naming)
+    Priorizamos negaciones (si el brief dice explícitamente que NO quiere naming).
+    """
+    t = _normalize_txt(brief or "")
+
+    # 1) Negaciones (ganan siempre)
+    neg_phrases = [
+        "sin naming",
+        "no naming",
+        "sin nombre",
+        "no incluye naming",
+        "no requiere naming",
+        "no necesitamos naming",
+        "no es necesario naming",
+        "no hacer naming",
+        "no queremos naming",
+        "nombre ya definido",
+        "nombre ya esta definido",
+        "nombre ya está definido",
+        "ya tenemos nombre",
+        "ya hay nombre",
+        "nombre definido",
+        "nombre existente",
+        "ya existe el nombre",
+        "el nombre ya existe",
+        "solo logo",
+        "solo logotipo",
+        "solo isologotipo",
+    ]
+    if any(p in t for p in neg_phrases):
+        return "full"
+
+    # 2) Señales positivas (con sinónimos)
+    # Nota: evitamos que "nombre" solo active naming; pedimos contexto/acción.
+    pos_phrases = [
+        "naming",
+        "brand name",
+        "name creation",
+        "crear nombre",
+        "crear el nombre",
+        "creacion de nombre",
+        "creación de nombre",
+        "definir nombre",
+        "definicion de nombre",
+        "definición de nombre",
+        "ponerle nombre",
+        "bautizar",
+        "bautizo de marca",
+        "nombre de marca",
+        "nombre comercial",
+        "nombre para la marca",
+        "denominacion",
+        "denominación",
+        "renombrar",
+        "cambio de nombre",
+        "re naming",
+        "re-naming",
+        "nueva denominacion",
+        "nueva denominación",
+        "desarrollo de nombre",
+        "desarrollar nombre",
+    ]
+    if any(p in t for p in pos_phrases):
+        return "full + naming"
+
+    return "full"
+
+        # Señales positivas (regex tolerante a artículos y variaciones)
+    pos_patterns = [
+        r"\bnaming\b",
+        r"\bbrand\s*name\b",
+        r"\bname\s*creation\b",
+        # verbos + (artículo opcional) + nombre
+        r"\b(crear|creacion|creación|definir|definicion|definición|desarrollar|desarrollo|ponerle|bautizar|renombrar)\s+(el|la|un|una)?\s*nombre\b",
+        r"\b(bautizo\s+de\s+marca)\b",
+        r"\b(nombre\s+de\s+marca|nombre\s+comercial|nombre\s+para\s+la\s+marca)\b",
+        r"\bdenominacion\b",
+        r"\bdenominación\b",
+        r"\bcambio\s+de\s+nombre\b",
+        r"\bre[-\s]?naming\b",
+    ]
+    if any(re.search(p, t) for p in pos_patterns):
+        return "full + naming"
+    return "full"
+
+
+def _display_level(mod: str, level_key: str, *, c_base_level: Optional[str] = None) -> str:
+    """
+    Devuelve el nombre "humano" del nivel para UI/PDF.
+    - E: renombra a paquetes ("Kit básico", "Kit full", "Campaña lanzamiento")
+    - C: si corresponde, muestra "full + naming"
+    """
+    mod = (mod or "").strip().upper()
+    level_key = (level_key or "").strip().lower()
+
+    if mod == "E":
+        return {
+            "lite": "Kit básico",
+            "full": "Kit full",
+            "plus": "Campaña lanzamiento",
+        }.get(level_key, level_key)
+
+    if mod == "C":
+        if level_key == "full" and (c_base_level or "").strip().lower() == "full + naming":
+            return "full + naming"
+        return level_key
+
+    return level_key
+
+
+def _deliverables_for_module_level(mod: str, level: str, *, brief: str, c_base_level: Optional[str] = None) -> List[str]:
+    """
+    Única fuente de verdad para entregables imprimibles: brief_parser.get_deliverables().
+    """
+    if mod == "E":
+        e_level = "Kit básico" if level == "lite" else ("Kit full" if level == "full" else "Campaña lanzamiento")
+        return get_deliverables("E", e_level)
+
+    if mod == "C":
+        c_base = c_base_level or infer_c_base_level(brief)
+        if level == "plus":
+            return get_deliverables("C", "plus", c_base_level=c_base)
+        if level == "full":
+            return get_deliverables("C", c_base)  # "full" o "full + naming"
+        if level == "lite":
+            return get_deliverables("C", "lite")
+        # refresh/rebranding (para pricing) → entregables conservadores
+        if level == "refresh":
+            return get_deliverables("C", "lite")
+        if level == "rebranding":
+            return get_deliverables("C", c_base)
+        return get_deliverables("C", c_base)
+
+    # A/B/D
+    if level not in ("lite", "full", "plus"):
+        level = "lite"
+    return get_deliverables(mod, level)
+
+def _build_deliverables_flat(mod_weights: Dict[str, float], *, brief: str, c_base_level: Optional[str] = None) -> List[str]:
+    """
+    Lista plana deduplicada de entregables (si querés un bloque único).
+    Respeta reglas por módulo a través de get_deliverables().
+    """
     if not isinstance(mod_weights, dict):
         return []
+
     orden = ["A", "B", "C", "D", "E"]
-    items: list[str] = []
     seen = set()
+    out: List[str] = []
 
     for mod in orden:
         w = mod_weights.get(mod)
@@ -492,84 +600,13 @@ def _build_deliverables_from(mod_weights: Dict[str, float]) -> list[str]:
             continue
 
         lvl = _level_for(mod, w)
-        for txt in DELIVERABLES.get(mod, {}).get(lvl, []):
-            if txt not in seen:
-                items.append(txt)
-                seen.add(txt)
-    return items
+        items = _deliverables_for_module_level(mod, lvl, brief=brief, c_base_level=c_base_level)
+        for it in items:
+            if it not in seen:
+                seen.add(it)
+                out.append(it)
 
-# ===== Normalización por keywords =====
-def _normalize_txt(s: str) -> str:
-    s = (s or "").lower()
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
-    )
-
-def infer_mod_weights_from_brief(brief: str) -> tuple[Dict[str, float], list]:
-    t = _normalize_txt(brief)
-    w: Dict[str, float] = {}
-    reasons: list[str] = []
-
-    if any(k in t for k in ["refresh", "ajuste menor", "ajustes menores", "tweaks", "retocar", "ligero refresh", "refresh de identidad"]):
-        w["C"] = 0.5
-        reasons.append("C→refresh (0.5) por keywords de refresh/ajustes menores.")
-    elif any(k in t for k in ["rebranding", "restyling", "evolucion de marca", "evolución de marca", "ajuste de logo", "optimizar logo", "modernizar logo"]):
-        w["C"] = 0.8
-        reasons.append("C→rebranding (0.8) por keywords de rebranding/evolución/ajuste de logo.")
-    elif any(k in t for k in ["desde cero", "identidad completa", "logo nuevo", "naming", "sistema tipografico", "sistema tipográfico", "lenguaje visual completo"]):
-        w["C"] = 1.0
-        reasons.append("C→full (1.0) por keywords de identidad completa/desde cero.")
-
-    if any(k in t for k in ["manual basico", "manual básico", "lite", "guia rapida", "guía rápida", "mini manual"]):
-        w["D"] = 0.6
-        reasons.append("D→lite (0.6) por keywords de manual básico/lite.")
-    elif any(k in t for k in ["manual completo", "brandbook full", "manual full"]):
-        w["D"] = 1.0
-        reasons.append("D→full (1.0) por keywords de manual completo.")
-
-    if any(k in t for k in ["dna lite", "estrategia lite", "sintesis", "síntesis", "resumen", "enfoque sintesis", "enfoque síntesis"]):
-        w["B"] = 0.65
-        reasons.append("B→lite (0.65) por keywords de síntesis/lite.")
-    elif any(k in t for k in ["dna full", "estrategia completa", "territorios completos", "manifiesto"]):
-        w["B"] = 1.0
-        reasons.append("B→full (1.0) por keywords de estrategia completa/manifiesto.")
-
-    if any(k in t for k in ["mas de 10", "más de 10", "muchas aplicaciones", "motion", "banners html", "lote grande"]):
-        w["E"] = 1.5
-        reasons.append("E→plus (1.5) por keywords de volumen alto/motion/HTML.")
-    elif any(k in t for k in ["hasta 10", "10 piezas", "template de presentacion", "template de presentación"]):
-        w["E"] = 1.0
-        reasons.append("E→full (1.0) por keywords de hasta 10 piezas/template.")
-    elif any(k in t for k in ["hasta 5", "kit rrss", "kit redes", "piezas simples"]):
-        w["E"] = 0.6
-        reasons.append("E→lite (0.6) por keywords de bajo volumen/kit rrss.")
-
-    if any(k in t for k in ["research", "benchmark", "descubrimiento", "auditoria", "auditoría"]):
-        w.setdefault("A", 1.0)
-        reasons.append("A→base (1.0) por keywords de research/benchmark.")
-
-    return w, reasons
-
-def merge_weights(parser_weights: Dict[str, float], inferred: Dict[str, float]) -> Dict[str, float]:
-    pw = dict(parser_weights or {})
-    if not inferred:
-        return pw
-
-    parser_all_full = False
-    if pw:
-        vals = [float(v) for v in pw.values() if v is not None]
-        parser_all_full = len(vals) > 0 and all(abs(v - 1.0) < 1e-6 for v in vals)
-
-    for m, v in inferred.items():
-        if m not in pw or not pw[m] or float(pw[m]) == 0.0:
-            pw[m] = v
-            continue
-        if abs(v - 1.0) > 1e-6:
-            pw[m] = v
-        else:
-            if parser_all_full:
-                pw[m] = v
-    return pw
+    return out
 
 # ===== PDF / wkhtmltopdf helpers =====
 def _pdfkit_config():
@@ -603,15 +640,20 @@ def _build_quote_context_from_session(rate_display: float, rate_ars_display: flo
     amount = float(st.session_state.get("selected_quote_amount") or q.get("logico", 0.0))
     pdf_currency = (st.session_state.get("pdf_currency") or "USD").upper()
 
+    brief = q.get("brief", "")
+    mod_weights = q.get("mod_weights", q.get("modulos_pesos", {})) or {}
+    c_base_level = q.get("c_base_level", None)
+
     return dict(
         cliente_nombre=q.get("cliente_nombre", ""),
-        brief=q.get("brief", ""),
+        brief=brief,
         scenario_name=choice,
         amount_usd=amount,
         rate_cop=float(rate_display or 0),
         rate_ars=float(rate_ars_display or 0),
         pdf_currency=pdf_currency,
-        mod_weights=q.get("mod_weights", q.get("modulos_pesos", {})),
+        mod_weights=mod_weights,
+        c_base_level=c_base_level,
         coefs=q.get("coefs", {}),
         estudio_nombre="This is Bravo",
         estudio_web="www.thisisbravo.co",
@@ -622,7 +664,7 @@ def _build_quote_context_from_session(rate_display: float, rate_ars_display: flo
         validity_days=30,
         payment_terms="50% al inicio del proyecto. 50% restante contra entrega de los materiales.",
         validity_text="Esta propuesta tiene una validez de 30 días a partir de la fecha de emisión.",
-        deliverables=_build_deliverables_from(q.get("mod_weights", q.get("modulos_pesos", {}))),
+        deliverables=_build_deliverables_flat(mod_weights, brief=brief, c_base_level=c_base_level),
     )
 
 def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
@@ -708,10 +750,7 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
 # ===== Tasa de cambio en vivo (COP + ARS) =====
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
-    """Devuelve (rates_dict, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None.
-       rates_dict ejemplo: {"COP": 4300.12, "ARS": 900.55}
-    """
-    # 1) exchangerate.host
+    """Devuelve (rates_dict, fuente_str). Cache 1h. Intenta 2 APIs, si fallan: None."""
     try:
         resp = requests.get(
             "https://api.exchangerate.host/latest",
@@ -728,7 +767,6 @@ def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
     except Exception:
         pass
 
-    # 2) open.er-api.com
     try:
         resp = requests.get("https://open.er-api.com/v6/latest/USD", timeout=8)
         if resp.ok:
@@ -800,7 +838,7 @@ def save_quote_to_sheets(
             "Min USD": "minimo_usd",
             "Base USD": "logico_usd",
             "Max USD": "maximo_usd",
-            "Cotización elegida": "monto_elegido_usd",  # por compatibilidad si existiera
+            "Cotización elegida": "monto_elegido_usd",
             "tasa_cop_usd_usada": "tasa_cop_usd_usada",
             "Notas": "notas",
             "Cotizacion final": "cotizacion_final_usd",
@@ -810,14 +848,13 @@ def save_quote_to_sheets(
         }
 
         local_now = datetime.now()
-
         payload = {
             "created_local": local_now.isoformat(timespec="seconds"),
             "cliente_nombre": (cliente_nombre or "").strip(),
             "cliente_tipo": cliente_tipo,
             "brief": (brief or "").strip(),
             "base_usd": float(base_usd),
-            "ajustado_usd": float(adjusted_usd),  # no se escribe si no hay header, pero lo conservamos
+            "ajustado_usd": float(adjusted_usd),
             "minimo_usd": float(minimo),
             "logico_usd": float(logico),
             "maximo_usd": float(maximo),
@@ -829,7 +866,6 @@ def save_quote_to_sheets(
         choice = st.session_state.get("selected_quote_name", "")
         chosen_usd = float(st.session_state.get("selected_quote_amount") or 0)
         chosen_cop = to_cop_local(tasa_cop_usd, chosen_usd)
-
         payload.update({
             "escenario_elegido": choice,
             "monto_elegido_usd": chosen_usd,
@@ -841,11 +877,10 @@ def save_quote_to_sheets(
             key = header_to_payload_key.get(h)
             row.append(payload.get(key, ""))
 
-        # Escribir SIEMPRE en la primera fila vacía real (ignorando formato)
-        # usando Col A (Fecha) como ancla y considerando fórmulas como "ocupado".
+        # Primera fila vacía real (ancla Col A)
         from gspread.utils import rowcol_to_a1
 
-        max_rows = ws.row_count  # normalmente 1000
+        max_rows = ws.row_count
         col_a_values = ws.get(f"A1:A{max_rows}")
         col_a_formulas = ws.get(f"A1:A{max_rows}", value_render_option="FORMULA")
 
@@ -934,17 +969,6 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
     total_coef = min(total_coef, float(C.get("tope_total_coef", 1.4)))
 
     adjusted = round(base * total_coef, 2)
-
-    rate = None
-    if "moneda" in catalog and isinstance(catalog["moneda"], dict):
-        rate = catalog["moneda"].get("usd_to_cop")
-    if rate is None:
-        rate = catalog.get("cop_per_usd", catalog.get("tasa_cop", 4300))
-    try:
-        rate = float(rate)
-    except Exception:
-        rate = 4300.0
-
     return {
         "base_usd": base,
         "adjusted_usd": adjusted,
@@ -958,7 +982,6 @@ def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dic
             "total_coef": round(total_coef, 3),
         },
         "scenarios": scen_from(catalog, adjusted),
-        "rate": rate,
     }
 
 # ===== Render UI helpers =====
@@ -1009,7 +1032,7 @@ def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_dis
     )
 
 def render_catalog_summary(catalog: Dict[str, Any]):
-    st.subheader("Catálogo (resumen)")
+    st.subheader("Catálogo de costos    ")
     P = catalog.get("precios")
     if isinstance(P, dict) and P:
         a = float(P.get("A", 0)); b = float(P.get("B", 0))
@@ -1021,11 +1044,11 @@ def render_catalog_summary(catalog: Dict[str, Any]):
         e_full = float(P.get("E_full", P.get("E", 0)))
         e_lite = float(P.get("E_lite", 0))
         e_plus = float(P.get("E_plus", 0))
-        st.markdown(f"- A (Research): **USD {a:,.2f}**")
-        st.markdown(f"- B (Brand DNA): **USD {b:,.2f}**")
+        st.markdown(f"- A (Investigación): **USD {a:,.2f}**")
+        st.markdown(f"- B (ADN de marca): **USD {b:,.2f}**")
         st.markdown(f"- C (Creación): **Full {c_full:,.2f} · Rebranding {c_reb:,.2f} · Refresh {c_ref:,.2f}**")
-        st.markdown(f"- D (Brandbook): **Full {d_full:,.2f}** · Lite {d_lite:,.2f}**")
-        st.markdown(f"- E (Implementación): **Full {e_full:,.2f} · Lite {e_lite:,.2f} · Plus {e_plus:,.2f}**  _(tope full = 600)_")
+        st.markdown(f"- D (Manuales y guías de estilo): **Full {d_full:,.2f}** · **Lite {d_lite:,.2f}**")
+        st.markdown(f"- E (Producción): **Kit full {e_full:,.2f} · Kit básico {e_lite:,.2f} · Campaña lanzamiento {e_plus:,.2f}**  _(tope full = 600)_")
         return
 
     mods = catalog.get("modulos", {})
@@ -1034,11 +1057,11 @@ def render_catalog_summary(catalog: Dict[str, Any]):
     c = float(mods.get("C", {}).get("precio_base_usd", 0))
     d = float(mods.get("D", {}).get("precio_base_usd", 0))
     e = float(mods.get("E", {}).get("precio_base_usd", 0))
-    st.markdown(f"- A (Research): **USD {a:,.2f}**")
-    st.markdown(f"- B (Brand DNA): **USD {b:,.2f}**")
+    st.markdown(f"- A (Investigación): **USD {a:,.2f}**")
+    st.markdown(f"- B (ADN de marca): **USD {b:,.2f}**")
     st.markdown(f"- C (Creación base): **USD {c:,.2f}** · Rebranding=0.8× · Refresh=0.5×")
-    st.markdown(f"- D (Brandbook): **USD {d:,.2f}** · Lite=0.6×")
-    st.markdown(f"- E (Implementación): **USD {e:,.2f}** · Lite=0.6× · Plus=1.5×  _(tope full = 600)_")
+    st.markdown(f"- D (Manuales y guías de estilo): **USD {d:,.2f}** · Lite=0.6×")
+    st.markdown(f"- E (Producción): **USD {e:,.2f}** · Kit básico=0.6× · Campaña lanzamiento=1.5×  _(tope full = 600)_")
 
 def render_quote_html(
     *,
@@ -1050,6 +1073,7 @@ def render_quote_html(
     rate_ars: float = 0.0,
     pdf_currency: str = "USD",
     mod_weights: Dict[str, float],
+    c_base_level: Optional[str] = None,
     coefs: Dict[str, float],
     validity_days: int = 30,
     estudio_nombre: str = "This is Bravo",
@@ -1088,18 +1112,17 @@ def render_quote_html(
     else:
         scenario_amount_main = f"USD {amount_usd:,.2f}"
 
-    # PDF para cliente: mostrar solo la moneda principal
-    sub1 = ""
-    sub2 = ""
-
     intro_text = (
         "A continuación presentamos el detalle del proyecto: "
         "las etapas, tareas y entregables que darán forma al trabajo, "
         "junto con los honorarios correspondientes."
     )
 
-    etiquetas = {"A": "Research", "B": "Brand DNA", "C": "Creación", "D": "Brandbook", "E": "Implementación"}
+    etiquetas = {"A": "Investigación", "B": "ADN de marca", "C": "Creación", "D": "Manuales y guías de estilo", "E": "Producción"}
     breakdown = []
+
+    c_base = c_base_level or infer_c_base_level(brief)
+
     for k, w in (mod_weights or {}).items():
         try:
             w = float(w)
@@ -1107,51 +1130,43 @@ def render_quote_html(
             continue
         if w <= 0:
             continue
-        nivel = {1.0: "full", 0.8: "rebranding", 0.65: "lite", 0.6: "lite", 0.5: "refresh", 1.5: "plus"}.get(round(w, 2), f"{w}×")
-        breakdown.append({"modulo": k, "nombre": etiquetas.get(k, k), "nivel": nivel})
 
+        level_key = _level_for(k, w)
+        level_ui = _display_level(k, level_key, c_base_level=c_base)
+
+        breakdown.append(
+            {
+                "modulo": k,
+                "nombre": etiquetas.get(k, k),
+                "nivel": level_ui,
+                "nivel_key": level_key,
+            }
+        )
+
+    # Acciones/entregables por bloque via get_deliverables()
+    c_base = c_base_level or infer_c_base_level(brief)
     acciones_expand = []
-    for b in breakdown:
-        k = b.get("modulo")
-        nombre_accion = b.get("nombre")
-        nivel_bruto = str(b.get("nivel") or "").lower()
-        items_por_nivel = DELIVERABLES.get(k, {})
 
-        if nivel_bruto == "plus":
-            nivel_norm = "plus"
-        elif nivel_bruto in ("full", "rebranding") or ("×" in nivel_bruto):
-            nivel_norm = "full"
-        elif nivel_bruto in ("refresh",):
-            nivel_norm = "lite"
-        else:
-            nivel_norm = "lite"
+    # Orden lógico
+    for mod in ["A", "B", "C", "D", "E"]:
+        w = (mod_weights or {}).get(mod)
+        if not w:
+            continue
+        try:
+            w = float(w)
+        except Exception:
+            continue
+        if w <= 0:
+            continue
 
-        if k == "A":
-            items_norm = {
-                "lite": items_por_nivel.get("lite", []),
-                "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
-                "plus": items_por_nivel.get("plus", []),
-            }
-        elif k == "D":
-            items_norm = {
-                "lite": items_por_nivel.get("lite", []),
-                "full": items_por_nivel.get("full", []),
-                "plus": items_por_nivel.get("plus", []),
-            }
-        else:
-            items_norm = {
-                "lite": items_por_nivel.get("lite", []),
-                "full": items_por_nivel.get("full", items_por_nivel.get("lite", [])),
-                "plus": items_por_nivel.get("plus", []),
-            }
+        lvl = _level_for(mod, w)
+        try:
+            entregables = _deliverables_for_module_level(mod, lvl, brief=brief, c_base_level=c_base)
+        except Exception:
+            entregables = []
 
-        if k == "D":
-            entregables_expand = items_norm.get(nivel_norm, [])
-        else:
-            entregables_expand = expand_entregables_por_nivel(items_norm, nivel_norm)
-
-        if entregables_expand:
-            acciones_expand.append({"accion": nombre_accion, "entregables": entregables_expand})
+        if entregables:
+            acciones_expand.append({"accion": etiquetas.get(mod, mod), "entregables": entregables})
 
     env = Environment(
         loader=FileSystemLoader(str(HERE / "templates")),
@@ -1173,8 +1188,8 @@ def render_quote_html(
         "intro_text": intro_text,
         "scenario_name": scenario_name,
         "scenario_amount_main": scenario_amount_main,
-        "scenario_amount_sub1": sub1,
-        "scenario_amount_sub2": sub2,
+        "scenario_amount_sub1": "",
+        "scenario_amount_sub2": "",
         "breakdown": breakdown,
         "deliverables": deliverables or [],
         "payment_terms": payment_terms,
@@ -1214,15 +1229,13 @@ if "last_quote" not in st.session_state:
     st.session_state["last_quote"] = None
 
 def clear_quote_state() -> None:
-    # Inputs y parámetros
     for k in [
         "cliente_nombre", "brief_text",
         "f_cliente_tipo", "f_urgencia", "f_complejidad", "f_idiomas", "f_stakeholders", "f_relacion",
-        # Resultado / selección
         "last_quote", "selected_quote_name", "selected_quote_amount",
         "quote_choice_radio", "pdf_currency",
-        # PDF
         "last_pdf_bytes", "last_pdf_name",
+        "btn_calcular", "btn_reset",
     ]:
         st.session_state.pop(k, None)
 
@@ -1230,7 +1243,6 @@ def clear_quote_state() -> None:
 catalog = load_catalog_safely()
 
 # ===== Sidebar: tasas + tema =====
-# Fallbacks desde catálogo (COP existe seguro; ARS es opcional)
 catalog_rate_cop = float(
     catalog.get("moneda", {}).get("usd_to_cop", catalog.get("cop_per_usd", catalog.get("tasa_cop", 4300)))
 )
@@ -1252,8 +1264,9 @@ with st.sidebar:
     st.caption(
         f"**{money(rate_display)} COP / USD**  \n"
         f"{ars_line}  \n"
+        f"<span style='opacity:.75'>{rate_source}</span>",
+        unsafe_allow_html=True,
     )
-
     st.divider()
 
     if "theme_dark" not in st.session_state:
@@ -1261,7 +1274,6 @@ with st.sidebar:
     st.toggle("Modo oscuro", key="theme_dark")
     theme_mode = "dark" if st.session_state["theme_dark"] else "light"
 
-# Inyectar tema según toggle
 inject_theme(theme_mode)
 
 # ===== UI principal =====
@@ -1357,16 +1369,21 @@ checks_section = st.container()
 def render_checks(q: Dict[str, Any]):
     with checks_section:
         st.subheader("Comprobaciones")
-        etiquetas = {"A": "Research", "B": "Brand DNA", "C": "Creación", "D": "Brandbook", "E": "Implementación"}
-        niveles = {1.0: "full", 0.65: "lite", 0.6: "lite", 0.8: "rebranding", 0.5: "refresh", 1.5: "plus"}
+        etiquetas = {"A": "Research", "B": "Brand DNA", "C": "Creación", "D": "Brandbook", "E": "Producción"}
+
+        c_base_level = q.get("c_base_level") or infer_c_base_level(q.get("brief", ""))
 
         partes = []
         for m, w in (q.get("mod_weights") or {}).items():
             try:
-                if w and float(w) > 0:
-                    partes.append(f"{m}: {etiquetas.get(m, m)} ({niveles.get(round(float(w), 2), f'{w}×')}).")
+                w = float(w)
             except Exception:
                 continue
+            if not w or w <= 0:
+                continue
+            lvl_key = _level_for(m, w)
+            lvl = _display_level(m, lvl_key, c_base_level=c_base_level)
+            partes.append(f"{m}: {etiquetas.get(m, m)} ({lvl}).")
 
         st.caption("Resumen de etapas detectadas: " + (" • ".join(partes) if partes else "—"))
 
@@ -1377,6 +1394,7 @@ def render_checks(q: Dict[str, Any]):
 
         with st.expander("Coeficientes aplicados", expanded=False):
             st.json(q.get("coefs", {}))
+
 
 def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: float):
     st.subheader("Resultado")
@@ -1421,6 +1439,7 @@ def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: f
             st.success("Cotización guardada y PDF generado. Abajo podés bajarlo.")
 
     if st.session_state.get("last_pdf_bytes"):
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
         st.download_button(
             "Bajar PDF",
             data=st.session_state["last_pdf_bytes"],
@@ -1441,63 +1460,67 @@ if calcular:
         parsed = detect_module_weights(brief)
         mod_weights = parsed.get("modulos_pesos", {}) or {}
 
-        inferred, reasons_kw = infer_mod_weights_from_brief(brief)
-        mod_weights = merge_weights(mod_weights, inferred)
+        if not mod_weights:
+            st.warning("No detecté módulos en el brief. Sumá señales claras (benchmark, ADN, logo, manual, aplicaciones, etc.) y volvé a calcular.")
+        else:
+            c_base_level = infer_c_base_level(brief)
 
-        features = {
-            "modulos_pesos": mod_weights,
-            "cliente_tipo": cliente_tipo,
-            "urgencia": urgencia,
-            "complejidad": complejidad,
-            "idiomas": int(idiomas),
-            "stakeholders": stakeholders,
-            "relacion": relacion,
-        }
+            features = {
+                "modulos_pesos": mod_weights,
+                "cliente_tipo": cliente_tipo,
+                "urgencia": urgencia,
+                "complejidad": complejidad,
+                "idiomas": int(idiomas),
+                "stakeholders": stakeholders,
+                "relacion": relacion,
+                "c_base_level": c_base_level,  # <-- clave para sumar C_naming si aplica
+            }
 
-        result = safe_compute_quote(catalog, features)
-        base_usd = float(result.get("base_usd", 0.0))
-        adjusted_usd = float(result.get("adjusted_usd", 0.0))
-        coefs = result.get("coefs", {})
-        scenarios = result.get("scenarios", {})
+            result = safe_compute_quote(catalog, features)
+            base_usd = float(result.get("base_usd", 0.0))
+            adjusted_usd = float(result.get("adjusted_usd", 0.0))
+            coefs = result.get("coefs", {})
+            scenarios = result.get("scenarios", {})
 
-        minimo = scenarios.get("min") or scenarios.get("minimo") or 0.0
-        logico = scenarios.get("logic") or scenarios.get("logico") or adjusted_usd
-        maximo = scenarios.get("max") or scenarios.get("maximo") or 0.0
+            minimo = scenarios.get("min") or scenarios.get("minimo") or 0.0
+            logico = scenarios.get("logic") or scenarios.get("logico") or adjusted_usd
+            maximo = scenarios.get("max") or scenarios.get("maximo") or 0.0
 
-        reasons_parsed = parsed.get("reasons", []) or []
-        reasons = reasons_parsed + reasons_kw
+            reasons = parsed.get("reasons", parsed.get("razones", [])) or []
+            c_base_level = infer_c_base_level(brief)
 
-        st.session_state["last_quote"] = {
-            "cliente_nombre": (cliente_nombre or "").strip(),
-            "cliente_tipo": cliente_tipo,
-            "urgencia": urgencia,
-            "complejidad": complejidad,
-            "idiomas": int(idiomas),
-            "stakeholders": stakeholders,
-            "relacion": relacion,
-            "brief": (brief or "").strip(),
-            "base_usd": float(base_usd),
-            "adjusted_usd": float(adjusted_usd),
-            "minimo": float(minimo),
-            "logico": float(logico),
-            "maximo": float(maximo),
-            "mod_weights": mod_weights,
-            "coefs": coefs,
-            "reasons": reasons,
-        }
+            st.session_state["last_quote"] = {
+                "cliente_nombre": (cliente_nombre or "").strip(),
+                "cliente_tipo": cliente_tipo,
+                "urgencia": urgencia,
+                "complejidad": complejidad,
+                "idiomas": int(idiomas),
+                "stakeholders": stakeholders,
+                "relacion": relacion,
+                "brief": (brief or "").strip(),
+                "base_usd": float(base_usd),
+                "adjusted_usd": float(adjusted_usd),
+                "minimo": float(minimo),
+                "logico": float(logico),
+                "maximo": float(maximo),
+                "mod_weights": mod_weights,
+                "c_base_level": c_base_level,
+                "coefs": coefs,
+                "reasons": reasons,
+            }
 
-        st.session_state["selected_quote_name"] = st.session_state.get("selected_quote_name", "Lógico")
-        st.session_state["selected_quote_amount"] = {
-            "Mínimo": minimo, "Lógico": logico, "Máximo": maximo
-        }.get(st.session_state["selected_quote_name"], logico)
+            st.session_state["selected_quote_name"] = st.session_state.get("selected_quote_name", "Lógico")
+            st.session_state["selected_quote_amount"] = {
+                "Mínimo": minimo, "Lógico": logico, "Máximo": maximo
+            }.get(st.session_state["selected_quote_name"], logico)
 
-        hint_box.empty()
-        st.divider()
+            hint_box.empty()
+            st.divider()
 
-        q = st.session_state["last_quote"]
-        with result_section:
-            render_result_ui(q, rate_display, rate_ars_display)
-        render_checks(q)
+            q = st.session_state["last_quote"]
+            with result_section:
+                render_result_ui(q, rate_display, rate_ars_display)
+            render_checks(q)
 
 elif st.session_state.get("last_quote"):
     q = st.session_state["last_quote"]

@@ -9,11 +9,6 @@ from pricing import (
 from ui import inject_font_and_base, inject_theme
 
 inject_font_and_base()
-
-# Si querés mantener el toggle, dejá la lógica como la tenés y acá ponés:
-# inject_theme("dark" if st.session_state.get("theme_dark", True) else "light")
-
-# Si querés forzar siempre un look:
 inject_theme("dark")
 
 st.set_page_config(page_title="Tests — Bravo Cotizador", layout="wide")
@@ -38,6 +33,16 @@ st.markdown("""
   color:rgba(220,230,245,.9);
   font-size:1rem;
 }
+.badge{
+  display:inline-block;
+  padding:2px 10px;
+  border:1px solid #2a2f36;
+  border-radius:999px;
+  font-size:.82rem;
+  color:#a6adbb;
+  background:#0f141a;
+  margin-left:8px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,6 +55,11 @@ def _catalog():
         return load_catalog()
 
 CAT = _catalog()
+
+# Peso “insights” recomendado (en tu implementación lo usás para mapear a A_insights)
+A_BASE = float(CAT.get("precios", {}).get("A", 700))
+A_INSIGHTS_PRICE = float(CAT.get("precios", {}).get("A_insights", 1500))
+A_INSIGHTS_WEIGHT = (A_INSIGHTS_PRICE / A_BASE) if A_BASE else (1500.0 / 700.0)
 
 CASES = {
     "A1 Auditoria completa": "Necesitamos una auditoria y benchmark competitivo con analisis de audiencia e insights accionables.",
@@ -66,9 +76,11 @@ CASES = {
     "Lanzamiento sin piezas": "Habra lanzamiento pero sin materiales ni campania."
 }
 
-st.title("Suite de tests")
+st.title("Testeo de casos")
 
-# === Inputs ===
+# =========================
+# Inputs (coeficientes)
+# =========================
 cli = st.selectbox("Cliente", list(CAT["coeficientes"]["cliente"].keys()), index=2)
 urg = st.selectbox("Urgencia", list(CAT["coeficientes"]["urgencia"].keys()), index=0)
 comp = st.selectbox("Complejidad", list(CAT["coeficientes"]["complejidad"].keys()), index=1)
@@ -76,17 +88,157 @@ idi = st.number_input("Idiomas", 1, 6, 1)
 stk = st.selectbox("Decisores", ["uno","dos","tres_o_mas"], index=0)
 rel = st.selectbox("Relación", list(CAT["coeficientes"]["relacion"].keys()), index=0)
 
-case_name = st.selectbox("Caso", list(CASES.keys()))
-brief = st.text_area("Brief (editable)", value=CASES[case_name], height=150)
+st.markdown("---")
+
+# =========================
+# Modo de prueba (Opción B)
+# =========================
+mode = st.radio(
+    "Modo de prueba",
+    ["Casos", "Pegar brief", "Constructor por módulos"],
+    horizontal=True
+)
+
+# ---- Session state para no pisar briefs al cambiar selects ----
+if "brief_text" not in st.session_state:
+    st.session_state["brief_text"] = ""
+
+# Helpers de UI
+def _pill(txt: str) -> str:
+    return f"<span class='badge'>{txt}</span>"
+
+brief = ""
+manual_weights = {}
+razones = []
+detalles = {}
+
+# =========================
+# Modo 1: Casos (parser)
+# =========================
+if mode == "Casos (parser)":
+    st.markdown(f"Usa el parser con casos de ejemplo. {_pill('parser')}", unsafe_allow_html=True)
+    case_name = st.selectbox("Caso", list(CASES.keys()), key="case_select")
+
+    c1, c2, c3 = st.columns([1, 1, 3])
+    with c1:
+        if st.button("Cargar caso en brief", use_container_width=True):
+            st.session_state["brief_text"] = CASES[case_name]
+    with c2:
+        if st.button("Limpiar brief", use_container_width=True):
+            st.session_state["brief_text"] = ""
+
+    brief = st.text_area("Brief (editable)", key="brief_text", height=150)
+
+# =========================
+# Modo 2: Pegar brief (parser)
+# =========================
+elif mode == "Pegar brief (parser)":
+    st.markdown(f"Pegá un brief y dejá que el parser lo interprete. {_pill('parser')}", unsafe_allow_html=True)
+    brief = st.text_area("Brief", key="brief_text", height=180, placeholder="Pegá acá el brief...")
+
+# =========================
+# Modo 3: Constructor por módulos (manual)
+# =========================
+else:
+    st.markdown(f"Elegís módulos y niveles manualmente (sin parser). Ideal para testear pricing. {_pill('manual')}", unsafe_allow_html=True)
+
+    colA, colB, colC = st.columns(3)
+
+    # A — Research (3 niveles)
+    with colA:
+        a_level = st.selectbox(
+            "A — Research",
+            ["(sin A)", "Benchmark (R1)", "Auditoría (R2)", "Insights (R3)"],
+            index=0
+        )
+        if a_level == "Benchmark (R1)":
+            manual_weights["A"] = 1.0
+        elif a_level == "Auditoría (R2)":
+            manual_weights["A"] = 1.5
+        elif a_level == "Insights (R3)":
+            manual_weights["A"] = float(A_INSIGHTS_WEIGHT)
+
+    # B — Brand DNA
+    with colB:
+        b_level = st.selectbox(
+            "B — Brand DNA",
+            ["(sin B)", "Lite", "Full"],
+            index=0
+        )
+        if b_level == "Lite":
+            manual_weights["B"] = 0.65
+        elif b_level == "Full":
+            manual_weights["B"] = 1.0
+
+    # C — Creación (naming/identidad)
+    with colC:
+        c_level = st.selectbox(
+            "C — Creación",
+            ["(sin C)", "Full", "Rebranding", "Refresh"],
+            index=0
+        )
+        if c_level == "Full":
+            manual_weights["C"] = 1.0
+        elif c_level == "Rebranding":
+            manual_weights["C"] = 0.8
+        elif c_level == "Refresh":
+            manual_weights["C"] = 0.5
+
+    colD, colE, colX = st.columns(3)
+
+    # D — Brandbook
+    with colD:
+        d_level = st.selectbox(
+            "D — Brandbook",
+            ["(sin D)", "Lite", "Full"],
+            index=0
+        )
+        if d_level == "Lite":
+            manual_weights["D"] = 0.6
+        elif d_level == "Full":
+            manual_weights["D"] = 1.0
+
+    # E — Implementación
+    with colE:
+        e_level = st.selectbox(
+            "E — Implementación",
+            ["(sin E)", "Lite", "Full", "Plus"],
+            index=0
+        )
+        if e_level == "Lite":
+            manual_weights["E"] = 0.6
+        elif e_level == "Full":
+            manual_weights["E"] = 1.0
+        elif e_level == "Plus":
+            manual_weights["E"] = 1.5
+
+    with colX:
+        st.write(" ")
+        st.write(" ")
+        if st.button("Limpiar módulos", use_container_width=True):
+            manual_weights.clear()
+
+    # Brief opcional (solo para referencia humana; no lo usa el cálculo)
+    brief = st.text_area(
+        "Brief (opcional, no afecta el cálculo en modo manual)",
+        key="brief_text",
+        height=120,
+        placeholder="Podés escribir algo para documentar el test, pero el cálculo no lo usa."
+    )
+
+    razones = ["Modo manual: módulos definidos por UI (sin parser)."]
+    detalles = {"mode": "manual"}
 
 # Botón fijo justo debajo de los campos (queda ahí siempre)
-run = st.button("Probar caso", use_container_width=True)
+run = st.button("Probar", use_container_width=True)
 
 # Contenedores para controlar el orden
 cards_top = st.container()      # Tarjetas arriba
 checks_bottom = st.container()  # Comprobaciones (colapsables) debajo
 
-# === Helper tarjetas ===
+# =========================
+# Helpers UI (tarjetas/tablas)
+# =========================
 def render_result_cards(minimo, logico, maximo):
     usd_min = f"USD {minimo:,.2f}"; usd_log = f"USD {logico:,.2f}"; usd_max = f"USD {maximo:,.2f}"
     cop_min = f"~ COP {to_cop(CAT, minimo):,}"; cop_log = f"~ COP {to_cop(CAT, logico):,}"; cop_max = f"~ COP {to_cop(CAT, maximo):,}"
@@ -110,7 +262,6 @@ def render_result_cards(minimo, logico, maximo):
     </div>
     """, unsafe_allow_html=True)
 
-# === Helper pretty views ===
 def pretty_coefs(coefs: dict):
     labels = {
         "cliente": "Cliente",
@@ -130,8 +281,8 @@ def pretty_coefs(coefs: dict):
 def pretty_mods(pesos: dict):
     etiquetas = {"A":"Research","B":"Brand DNA","C":"Creación","D":"Brandbook","E":"Implementación"}
     rows = []
-    for m, w in pesos.items():
-        rows.append({"Módulo": f"{m} — {etiquetas.get(m,m)}", "Peso": f"{float(w):.2f}"})
+    for m, w in (pesos or {}).items():
+        rows.append({"Módulo": f"{m} — {etiquetas.get(m,m)}", "Peso": f"{float(w):.4f}"})
     st.table(rows)
 
 def pretty_details(detalles: dict, razones: list):
@@ -140,8 +291,8 @@ def pretty_details(detalles: dict, razones: list):
         return
     bullets = []
     if detalles:
-        mode = detalles.get("mode")
-        if mode: bullets.append(f"**Modo:** {mode}")
+        mode_ = detalles.get("mode")
+        if mode_: bullets.append(f"**Modo:** {mode_}")
         flags = []
         for f in ["has_naming","has_logo","wants_rebrand","wants_refresh"]:
             if f in detalles:
@@ -153,13 +304,19 @@ def pretty_details(detalles: dict, razones: list):
         bullets.append("**Razones:** " + " | ".join(razones))
     st.markdown("\n\n".join([f"- {b}" for b in bullets]) or "—")
 
-# === Acción ===
+# =========================
+# Acción
+# =========================
 if run:
-    # 1) Parse
-    parsed = detect_module_weights(brief)
-    pesos = parsed.get("modulos_pesos", {})
-    razones = parsed.get("reasons", [])
-    detalles = parsed.get("detalles") or debug_parse(brief)
+    # 1) Parse o Manual
+    if mode in ["Casos (parser)", "Pegar brief (parser)"]:
+        parsed = detect_module_weights(brief or "")
+        pesos = parsed.get("modulos_pesos", {})
+        razones = parsed.get("reasons", [])
+        detalles = parsed.get("detalles") or debug_parse(brief or "")
+    else:
+        pesos = dict(manual_weights or {})
+        # razones/detalles ya vienen seteados arriba
 
     # 2) Pricing
     base_usd = base_price_usd(CAT, pesos)
@@ -171,14 +328,13 @@ if run:
     with cards_top:
         st.subheader("Escenarios")
         render_result_cards(
-            escenarios.get("minimo") or escenarios.get("min") or 0.0,
-            escenarios.get("logico") or escenarios.get("logic") or adjusted_usd,
-            escenarios.get("maximo") or escenarios.get("max") or 0.0,
+            escenarios.get("minimo") or 0.0,
+            escenarios.get("logico") or adjusted_usd,
+            escenarios.get("maximo") or 0.0,
         )
 
     # Comprobaciones (colapsables) DEBAJO
     with checks_bottom:
-        # Recuadro base (primero) y recién DEBAJO el título/expander
         st.markdown(
             f"<div class='bravo-meta'><b>Tarifa base (USD):</b> {base_usd_bundled:,.2f} → "
             f"<b>Ajustado (USD):</b> {adjusted_usd:,.2f}</div>",

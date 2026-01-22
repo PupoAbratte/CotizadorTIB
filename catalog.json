@@ -3,10 +3,14 @@
 
   "precios": {
     "A": 700,
+    "A_benchmark": 700,
+    "A_audit": 1050,
+    "A_insights": 1500,
     "B": 1000,
     "C_full": 1200,
     "C_rebranding": 960,
     "C_refresh": 600,
+    "C_naming":350,
     "D_full": 800,
     "D_lite": 480,
     "E_full": 600,
