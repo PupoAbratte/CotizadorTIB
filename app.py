@@ -41,48 +41,14 @@ if DEBUG_UI:
     st.sidebar.caption(f"DEBUG A.lite[0]: {DELIVERABLES['A']['lite'][0]}")
 
 # ===== Importar pricing (opcional, con fallback) =====
-try:
-    import pricing as _pricing
-except Exception as e:
-    _pricing = None
-    st.warning(f"No se pudo importar pricing.py (se usará cálculo básico): {e}")
+from pricing import load_catalog, compute_quote, to_scenarios
 
 # ===== Utilidades =====
 def money(x: float) -> str:
     return f"{x:,.2f}"
 
 def load_catalog_safely() -> Dict[str, Any]:
-    if _pricing and hasattr(_pricing, "load_catalog") and callable(_pricing.load_catalog):
-        try:
-            return _pricing.load_catalog(str(CATALOG_PATH))
-        except TypeError:
-            return _pricing.load_catalog()
-        except Exception:
-            pass
-
-    if not CATALOG_PATH.exists():
-        st.error(f"No se encontró catalog.json en {CATALOG_PATH}")
-        st.stop()
-
-    with open(CATALOG_PATH, "r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-def scen_from(catalog: Dict[str, Any], adjusted_usd: float) -> Dict[str, float]:
-    if _pricing and hasattr(_pricing, "to_scenarios") and callable(_pricing.to_scenarios):
-        try:
-            return _pricing.to_scenarios(catalog, adjusted_usd)
-        except Exception:
-            pass
-
-    S = catalog.get("escenarios", {})
-    minimo = float(S.get("minimo", 0.85))
-    logico = float(S.get("logico", 1.0))
-    maximo = float(S.get("maximo", 1.3))
-    return {
-        "minimo": round(adjusted_usd * minimo, 2),
-        "logico": round(adjusted_usd * logico, 2),
-        "maximo": round(adjusted_usd * maximo, 2),
-    }
+    return load_catalog(str(CATALOG_PATH))
 
 def to_cop_local(rate: float, usd: float) -> int:
     try:
@@ -403,79 +369,7 @@ def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
 
 # ===== Cálculo de cotización (fallback si falta pricing.py) =====
 def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
-    if _pricing and hasattr(_pricing, "compute_quote") and callable(_pricing.compute_quote):
-        try:
-            return _pricing.compute_quote(catalog, features)
-        except Exception as e:
-            st.warning(f"compute_quote falló, se usa cálculo básico: {e}")
-
-    mods_cfg = catalog.get("modulos", {})
-    weights: Dict[str, float] = features.get("modulos_pesos", {})
-    base = 0.0
-
-    for m, w in weights.items():
-        cfg = mods_cfg.get(m, {})
-        price = float(cfg.get("precio_base_usd", 0.0))
-        if m == "E" and float(w) >= 1.0:
-            price = min(price, 600.0)
-        base += price * float(w)
-
-    base = round(base, 2)
-
-    def _normalize(s: str) -> str:
-        s = str(s).strip().lower()
-        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-
-    def keymatch(d: dict, key: str, default=1.0):
-        if not isinstance(d, dict):
-            return default
-        key_n = _normalize(key)
-        for k, v in d.items():
-            if _normalize(k) == key_n:
-                return v
-        return d.get(key, default)
-
-    C = catalog.get("coeficientes", {})
-    c_cliente = float(keymatch(C.get("cliente", {}), features.get("cliente_tipo", "PyME"), 1.0))
-    c_urg = float(keymatch(C.get("urgencia", {}), features.get("urgencia", "Normal"), 1.0))
-    c_comp = float(keymatch(C.get("complejidad", {}), features.get("complejidad", "Media"), 1.0))
-    c_rel = float(keymatch(C.get("relacion", {}), features.get("relacion", "Nuevo"), 1.0))
-
-    idiomas_total = int(features.get("idiomas", 1))
-    c_id_base = float(C.get("idiomas", {}).get("base", 1.0))
-    c_id_extra = float(C.get("idiomas", {}).get("extra", 0.0))
-    c_id = c_id_base + max(0, idiomas_total - 1) * c_id_extra
-
-    stks = features.get("stakeholders", "uno")
-    st_map = C.get("stakeholders", {})
-    if isinstance(stks, int):
-        if stks <= 1:
-            c_st = 1.0
-        elif stks == 2:
-            c_st = float(keymatch(st_map, "dos", 1.04))
-        else:
-            c_st = float(keymatch(st_map, "tres_o_mas", 1.08))
-    else:
-        c_st = float(keymatch(st_map, stks, 1.0))
-
-    total_coef = c_cliente * c_urg * c_comp * c_id * c_st * c_rel
-    total_coef = min(total_coef, float(C.get("tope_total_coef", 1.4)))
-
-    adjusted = round(base * total_coef, 2)
-    return {
-        "base_usd": base,
-        "adjusted_usd": adjusted,
-        "coefs": {
-            "cliente": c_cliente,
-            "urgencia": c_urg,
-            "complejidad": c_comp,
-            "idiomas": round(c_id, 3),
-            "stakeholders": round(c_st, 3),
-            "relacion": c_rel,
-            "total_coef": round(total_coef, 3),
-        },
-        "scenarios": scen_from(catalog, adjusted),
-    }
+    return compute_quote(catalog, features)
 
 # ===== Render UI helpers =====
 def render_result_cards(minimo, logico, maximo, base_usd, adjusted_usd, rate_display, rate_ars_display):
