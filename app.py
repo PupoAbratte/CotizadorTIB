@@ -22,6 +22,7 @@ from brief_parser import DELIVERABLES, get_deliverables, detect_module_weights
 from ui import inject_font_and_base, inject_theme
 from sheets import save_quote_to_sheets
 from pdf_generator import safe_filename, generate_pdf
+from llm_parser import parse_brief_with_llm
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
@@ -660,11 +661,17 @@ with left_col:
             key="brief_text",
         )
 
-    btn_col1, btn_col2, spacer = st.columns([1, 1, 6], gap="small")
+    _gemini_available = bool(st.secrets.get("GEMINI_API_KEY"))
+    btn_col1, btn_col2, btn_col3, spacer = st.columns([1, 1, 1.5, 4.5], gap="small")
     with btn_col1:
         calcular = st.button("Calcular", key="btn_calcular", type="primary")
     with btn_col2:
         reset = st.button("Limpiar", key="btn_reset", type="secondary")
+    with btn_col3:
+        if _gemini_available:
+            use_llm = st.toggle("Usar IA", value=True, key="use_llm_toggle", help="Interpreta el brief con Gemini AI. Si está apagado, usa detección por keywords.")
+        else:
+            use_llm = False
 
 with right_col:
     st.markdown("### Parámetros")
@@ -819,11 +826,28 @@ if calcular:
         st.session_state.pop("last_pdf_bytes", None)
         st.session_state.pop("last_pdf_name", None)
 
-        parsed = detect_module_weights(brief)
+        parsed = None
+        used_llm = False
+
+        if use_llm:
+            with st.spinner("Analizando brief con IA..."):
+                parsed = parse_brief_with_llm(brief, st.secrets.get("GEMINI_API_KEY", ""))
+            if parsed:
+                used_llm = True
+                # Si Gemini detectó naming, ajustar c_base_level
+                if parsed.get("has_naming"):
+                    parsed["_llm_has_naming"] = True
+
+        if not parsed:
+            if use_llm:
+                st.info("IA no disponible, usando detección por keywords.")
+            parsed = detect_module_weights(brief)
+
         mod_weights = parsed.get("modulos_pesos", {}) or {}
 
         if not mod_weights:
             st.warning("No detecté módulos en el brief. Sumá señales claras (benchmark, ADN, logo, manual, aplicaciones, etc.) y volvé a calcular.")
+
         else:
             c_base_level = infer_c_base_level(brief)
 
@@ -849,7 +873,10 @@ if calcular:
             maximo = scenarios.get("max") or scenarios.get("maximo") or 0.0
 
             reasons = parsed.get("reasons", parsed.get("razones", [])) or []
-            c_base_level = infer_c_base_level(brief)
+            if parsed.get("_llm_has_naming"):
+                c_base_level = "full + naming"
+            else:
+                c_base_level = infer_c_base_level(brief)
 
             st.session_state["last_quote"] = {
                 "cliente_nombre": (cliente_nombre or "").strip(),
