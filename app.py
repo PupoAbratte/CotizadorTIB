@@ -21,6 +21,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from auth import require_login
 from brief_parser import DELIVERABLES, get_deliverables, detect_module_weights
 from ui import inject_font_and_base, inject_theme
+from sheets import save_quote_to_sheets
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
@@ -325,13 +326,32 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
         if not q:
             return False
 
+        choice = st.session_state.get("selected_quote_name", "")
+        chosen_usd = float(st.session_state.get("selected_quote_amount") or 0)
+        chosen_cop = to_cop_local(rate_display, chosen_usd)
+
         ok = save_quote_to_sheets(
-            q["cliente_nombre"],
-            q["cliente_tipo"], q["urgencia"], q["complejidad"], q["idiomas"],
-            q["stakeholders"], q["relacion"], q["brief"],
-            q["base_usd"], q["adjusted_usd"], q["minimo"], q["logico"], q["maximo"],
+            SHEET_ID,
+            WORKSHEET_NAME,
+            cliente_nombre=q["cliente_nombre"],
+            cliente_tipo=q["cliente_tipo"],
+            urgencia=q["urgencia"],
+            complejidad=q["complejidad"],
+            idiomas=q["idiomas"],
+            stakeholders=q["stakeholders"],
+            relacion=q["relacion"],
+            brief=q["brief"],
+            base_usd=q["base_usd"],
+            adjusted_usd=q["adjusted_usd"],
+            minimo=q["minimo"],
+            logico=q["logico"],
+            maximo=q["maximo"],
             tasa_cop_usd=rate_display,
+            escenario_elegido=choice,
+            monto_elegido_usd=chosen_usd,
+            monto_elegido_cop=chosen_cop,
         )
+        
         if not ok:
             return False
 
@@ -398,133 +418,6 @@ def get_live_usd_rates() -> Optional[Tuple[Dict[str, float], str]]:
         pass
 
     return None
-
-# ===== Google Sheets =====
-def _sheet_client():
-    creds_info = dict(st.secrets["gcp_service_account"])
-    creds = service_account.Credentials.from_service_account_info(
-        creds_info,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    gc = gspread.authorize(creds)
-    return gc, creds.service_account_email
-
-def save_quote_to_sheets(
-    cliente_nombre: str,
-    cliente_tipo: str,
-    urgencia: str,
-    complejidad: str,
-    idiomas: int,
-    stakeholders: str,
-    relacion: str,
-    brief: str,
-    base_usd: float,
-    adjusted_usd: float,
-    minimo: float,
-    logico: float,
-    maximo: float,
-    *,
-    tasa_cop_usd: float,
-) -> bool:
-    try:
-        gc, _ = _sheet_client()
-        sh = gc.open_by_key(SHEET_ID)
-
-        try:
-            ws = sh.worksheet(WORKSHEET_NAME)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=WORKSHEET_NAME, rows=1000, cols=26)
-            ws.append_row(
-                [
-                    "Fecha","Cliente","Tipo","Brief","Precio base USD",
-                    "Min USD","Base USD","Max USD","tasa_cop_usd_usada","Notas",
-                    "Cotizacion final","Escenario elegido","Monto elegido USD","Monto elegido COP"
-                ],
-                value_input_option="RAW",
-            )
-
-        headers = [h.strip() for h in ws.row_values(1)]
-        header_to_payload_key = {
-            "Fecha": "created_local",
-            "Cliente": "cliente_nombre",
-            "Tipo": "cliente_tipo",
-            "Brief": "brief",
-            "Precio base USD": "base_usd",
-            "Min USD": "minimo_usd",
-            "Base USD": "logico_usd",
-            "Max USD": "maximo_usd",
-            "Cotización elegida": "monto_elegido_usd",
-            "tasa_cop_usd_usada": "tasa_cop_usd_usada",
-            "Notas": "notas",
-            "Cotizacion final": "cotizacion_final_usd",
-            "Escenario elegido": "escenario_elegido",
-            "Monto elegido USD": "monto_elegido_usd",
-            "Monto elegido COP": "monto_elegido_cop",
-        }
-
-        local_now = datetime.now()
-        payload = {
-            "created_local": local_now.isoformat(timespec="seconds"),
-            "cliente_nombre": (cliente_nombre or "").strip(),
-            "cliente_tipo": cliente_tipo,
-            "brief": (brief or "").strip(),
-            "base_usd": float(base_usd),
-            "ajustado_usd": float(adjusted_usd),
-            "minimo_usd": float(minimo),
-            "logico_usd": float(logico),
-            "maximo_usd": float(maximo),
-            "tasa_cop_usd_usada": float(tasa_cop_usd or 0),
-            "notas": "",
-            "cotizacion_final_usd": "",
-        }
-
-        choice = st.session_state.get("selected_quote_name", "")
-        chosen_usd = float(st.session_state.get("selected_quote_amount") or 0)
-        chosen_cop = to_cop_local(tasa_cop_usd, chosen_usd)
-        payload.update({
-            "escenario_elegido": choice,
-            "monto_elegido_usd": chosen_usd,
-            "monto_elegido_cop": chosen_cop,
-        })
-
-        row = []
-        for h in headers:
-            key = header_to_payload_key.get(h)
-            row.append(payload.get(key, ""))
-
-        # Primera fila vacía real (ancla Col A)
-        from gspread.utils import rowcol_to_a1
-
-        max_rows = ws.row_count
-        col_a_values = ws.get(f"A1:A{max_rows}")
-        col_a_formulas = ws.get(f"A1:A{max_rows}", value_render_option="FORMULA")
-
-        last_used = 1  # header
-        for i in range(2, max_rows + 1):
-            v = (col_a_values[i - 1][0] if i - 1 < len(col_a_values) and col_a_values[i - 1] else "")
-            f = (col_a_formulas[i - 1][0] if i - 1 < len(col_a_formulas) and col_a_formulas[i - 1] else "")
-
-            v_norm = str(v).replace("\u00a0", " ").strip()
-            f_norm = str(f).strip()
-
-            if v_norm != "" or (f_norm.startswith("=") and f_norm != "="):
-                last_used = i
-
-        next_row = last_used + 1
-        start = rowcol_to_a1(next_row, 1)
-        end = rowcol_to_a1(next_row, len(headers))
-
-        ws.update(f"{start}:{end}", [row], value_input_option="USER_ENTERED")
-        return True
-
-    except gspread.SpreadsheetNotFound:
-        st.error("No se encontró el Sheet por ID. Verificá SHEET_ID y compartí el Sheet con la cuenta de servicio (Editor).")
-    except Exception as e:
-        st.exception(e)
-    return False
 
 # ===== Cálculo de cotización (fallback si falta pricing.py) =====
 def safe_compute_quote(catalog: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
