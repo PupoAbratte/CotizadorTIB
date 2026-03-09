@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, List
 
 import gspread
-import weasyprint
 import requests
 import streamlit as st
 from google.oauth2 import service_account
@@ -22,6 +21,7 @@ from auth import require_login
 from brief_parser import DELIVERABLES, get_deliverables, detect_module_weights
 from ui import inject_font_and_base, inject_theme
 from sheets import save_quote_to_sheets
+from pdf_generator import safe_filename, generate_pdf
 
 # ===== Config =====
 st.set_page_config(page_title="Cotizador — This is Bravo", layout="wide")
@@ -281,12 +281,6 @@ def _build_deliverables_flat(mod_weights: Dict[str, float], *, brief: str, c_bas
 
     return out
 
-def _safe_filename(s: str) -> str:
-    s = (s or "").strip()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^A-Za-z0-9._-]", "", s)
-    return s or "cotizacion"
-
 def _build_quote_context_from_session(rate_display: float, rate_ars_display: float) -> dict:
     q = st.session_state.get("last_quote") or {}
     choice = st.session_state.get("selected_quote_name") or "Lógico"
@@ -358,23 +352,11 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
         ctx = _build_quote_context_from_session(rate_display, rate_ars_display)
         body_html = render_quote_html(**ctx)
 
-        def _url_fetcher(url):
-            if url.startswith("http"):
-                resp = requests.get(url, timeout=15)
-                return {
-                    "string": resp.content,
-                    "mime_type": resp.headers.get("Content-Type", "image/png"),
-                }
-            return weasyprint.default_url_fetcher(url)
-
-        pdf_bytes = weasyprint.HTML(
-            string=body_html,
-            url_fetcher=_url_fetcher,
-        ).write_pdf()
+        pdf_bytes = generate_pdf(body_html)
 
         st.session_state["last_pdf_bytes"] = pdf_bytes
         fecha = datetime.now().strftime("%Y%m%d")
-        cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
+        cliente_slug = safe_filename(ctx.get("cliente_nombre") or "cliente")
         st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
 
         return True
