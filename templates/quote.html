@@ -19,19 +19,42 @@
     }
 
     @page {
-    margin-top: 20mm;
-    margin-right: 16mm;
-    margin-bottom: 35mm;   /* debe coincidir con la altura del footer aprox */
-    margin-left: 16mm;
+      size: A4;
+      margin-top: 20mm;
+      margin-right: 16mm;
+      margin-bottom: 35mm;
+      margin-left: 16mm;
+
+      @bottom-center {
+        content: element(running-footer);
+      }
+    }
+
+    /* Footer flotante (WeasyPrint running element) */
+    .running-footer {
+      position: running(running-footer);
+      text-align: center;
+      font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    .running-footer img {
+      max-height: 50px;
+      display: block;
+      margin: 0 auto 3mm;
+    }
+    .running-footer .footer-text {
+      color: #000000;
+      font-size: 10pt;
+      font-weight: 400;
+      line-height: 1.6;
     }
 
     .page {
       width: 100%;
-      padding: 15mm 16mm 0mm; /* sin extra: el @page ya reserva 35mm abajo */
+      padding: 0;
       background: #ffffff;
     }
 
-    /* HEADER (versión original funcional) */
+    /* HEADER */
     .header{
       display: flex;
       flex-direction: column;
@@ -80,11 +103,11 @@
       margin-top: 0;
     }
     h4 {
-      font-size: 11pt;          /* tamaño intermedio entre h3 y párrafo */
-      font-weight:400;         /* semi-negrita */
-      color: #000000;           /* gris suave */
-      margin: 0 0 5mm 0;        /* margen inferior */
-      line-height: 1.3;         /* aire más cómodo */
+      font-size: 11pt;
+      font-weight:400;
+      color: #000000;
+      margin: 0 0 5mm 0;
+      line-height: 1.3;
     }
 
     .doc-title {
@@ -95,7 +118,6 @@
     p { margin: 0 0 5mm; }
     ul { margin: 0 0 6mm 6mm; padding: 0; }
     li { margin: 2mm 0; }
-    /* Ajustes visuales para Acciones y Entregables */
     ul {
       list-style-type: disc;
       padding-left: 3mm;
@@ -152,17 +174,19 @@
       margin-left: -3px;
       margin-bottom: 3px;
     }
-    
-    .pdf-footer .footer-text {
-      color: #000000;
-      font-size: 10pt;
-      font-weight: 400;
-      line-height: 1.4;
-    }
   </style>
 </head>
 
 <body>
+  <!-- FOOTER (WeasyPrint lo extrae y lo coloca en @bottom-center de cada página) -->
+  <div class="running-footer">
+    <img src="https://thisisbravo.co/wp-content/uploads/2025/11/LOGO-CENTRADO.png" alt="This is Bravo logo">
+    <div class="footer-text">
+      <strong>LATAM BRAND STUDIO</strong><br>
+      hola@thisisbravo.co · www.thisisbravo.co
+    </div>
+  </div>
+
   <div class="page">
 
     <!-- HEADER -->

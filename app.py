@@ -6,15 +6,13 @@
 import json
 import os
 import re
-import shutil
-import tempfile
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, List
 
 import gspread
-import pdfkit
+import weasyprint
 import requests
 import streamlit as st
 from google.oauth2 import service_account
@@ -282,26 +280,6 @@ def _build_deliverables_flat(mod_weights: Dict[str, float], *, brief: str, c_bas
 
     return out
 
-# ===== PDF / wkhtmltopdf helpers =====
-def _pdfkit_config():
-    env_path = os.environ.get("WKHTMLTOPDF_PATH")
-    if env_path and os.path.exists(env_path):
-        return pdfkit.configuration(wkhtmltopdf=env_path)
-
-    which_path = shutil.which("wkhtmltopdf")
-    if which_path:
-        return pdfkit.configuration(wkhtmltopdf=which_path)
-
-    for p in ["/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"]:
-        if os.path.exists(p):
-            return pdfkit.configuration(wkhtmltopdf=p)
-
-    raise OSError(
-        "wkhtmltopdf no está instalado en el entorno. "
-        "En Streamlit Cloud, agregá un archivo 'packages.txt' con la línea 'wkhtmltopdf' y redeploy. "
-        "Localmente, instalalo según tu sistema."
-    )
-
 def _safe_filename(s: str) -> str:
     s = (s or "").strip()
     s = re.sub(r"\s+", "_", s)
@@ -360,58 +338,24 @@ def save_and_generate_pdf(rate_display: float, rate_ars_display: float) -> bool:
         ctx = _build_quote_context_from_session(rate_display, rate_ars_display)
         body_html = render_quote_html(**ctx)
 
-        tmp_dir = Path("tmp_assets")
-        tmp_dir.mkdir(exist_ok=True)
+        def _url_fetcher(url):
+            if url.startswith("http"):
+                resp = requests.get(url, timeout=15)
+                return {
+                    "string": resp.content,
+                    "mime_type": resp.headers.get("Content-Type", "image/png"),
+                }
+            return weasyprint.default_url_fetcher(url)
 
-        footer_html = render_quote_footer_html(
-            estudio_nombre=ctx.get("estudio_nombre", "This is Bravo"),
-            estudio_web=ctx.get("estudio_web", "www.thisisbravo.co"),
-            estudio_mail=ctx.get("estudio_mail", "hola@thisisbravo.co"),
-        )
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".html", delete=False, encoding="utf-8", dir=tmp_dir
-        ) as tmp_footer:
-            tmp_footer.write(footer_html)
-            footer_path = tmp_footer.name
-
-        footer_url = "file://" + footer_path
-
-        options = {
-            "encoding": "UTF-8",
-            "page-size": "A4",
-            "margin-top": "20mm",
-            "margin-right": "16mm",
-            "margin-bottom": "35mm",
-            "margin-left": "16mm",
-            "footer-html": footer_url,
-            "footer-spacing": "5",
-            "enable-local-file-access": "",
-            "load-error-handling": "ignore",
-            "custom-header": [(
-                "User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36"
-            )],
-            "allow": str(tmp_dir.resolve()),
-        }
-
-        pdf_bytes = pdfkit.from_string(
-            body_html,
-            False,
-            configuration=_pdfkit_config(),
-            options=options,
-        )
+        pdf_bytes = weasyprint.HTML(
+            string=body_html,
+            url_fetcher=_url_fetcher,
+        ).write_pdf()
 
         st.session_state["last_pdf_bytes"] = pdf_bytes
         fecha = datetime.now().strftime("%Y%m%d")
         cliente_slug = _safe_filename(ctx.get("cliente_nombre") or "cliente")
         st.session_state["last_pdf_name"] = f"{fecha}_Cotizacion {cliente_slug}.pdf"
-
-        try:
-            if os.path.exists(footer_path):
-                os.unlink(footer_path)
-        except Exception:
-            pass
 
         return True
 
@@ -870,31 +814,6 @@ def render_quote_html(
         "validity_text": validity_text,
         "coefs": coefs or {},
         "acciones_expand": acciones_expand,
-    }
-    return tpl.render(**context)
-
-def render_quote_footer_html(
-    *,
-    estudio_nombre: str = "This is Bravo",
-    estudio_web: str = "www.thisisbravo.co",
-    estudio_mail: str = "hola@thisisbravo.co",
-    estudio_eslogan="LATAM BRAND STUDIO",
-    studio_logo_url: str = "https://thisisbravo.co/wp-content/uploads/2025/11/logo-2.png",
-    **kwargs
-) -> str:
-    env = Environment(
-        loader=FileSystemLoader(str(HERE / "templates")),
-        autoescape=select_autoescape(["html", "xml"]),
-        trim_blocks=True,
-        lstrip_blocks=True,
-    )
-    tpl = env.get_template("quote_footer.html")
-    context = {
-        "studio_name": estudio_nombre,
-        "studio_site": estudio_web,
-        "studio_email": estudio_mail,
-        "studio_logo_url": studio_logo_url,
-        "studio_slogan": estudio_eslogan,
     }
     return tpl.render(**context)
 
