@@ -191,6 +191,17 @@ rename_map = {
     "Fecha": "fecha",
 }
 df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+# Validación de columnas esperadas
+_required = {"base_sin_overhead_usd", "minimo_usd", "logico_usd", "maximo_usd"}
+_found = set(df.columns)
+_missing = _required - _found
+if _missing:
+    original_names = {v: k for k, v in rename_map.items()}
+    missing_display = [f"'{original_names.get(m, m)}'" for m in _missing]
+    st.warning(
+        f"Faltan columnas en el Sheet: {', '.join(missing_display)}. "
+        "Verificá que los headers no hayan cambiado. Los KPIs afectados mostrarán '—'."
+    )
 
 # =========================
 # Parse moneda
