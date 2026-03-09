@@ -1,18 +1,37 @@
-# Python / Streamlit
+# ===== Python =====
 __pycache__/
-*.pyc
-.pytest_cache/
-.streamlit/
-logs/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
 dist/
 build/
-# Entornos
+.eggs/
+
+# ===== Virtual environments =====
 .venv/
 venv/
-# PDFs/artefactos locales
-*.pdf
-# Sistema
-.DS_Store
-# Credenciales (NO subir)
+ENV/
+
+# ===== Streamlit =====
+.streamlit/secrets.toml
+
+# ===== Credenciales (NUNCA subir al repo) =====
 service_account.json
+*.pem
+*.key
+
+# ===== Temporales =====
+tmp_assets/
+*.tmp
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== Base de datos local (ya no se usa) =====
 quotes.db
