@@ -261,7 +261,7 @@ def _build_quote_context_from_session(rate_display: float, rate_ars_display: flo
     return dict(
         cliente_nombre=q.get("cliente_nombre", ""),
         brief=brief,
-        scenario_name=choice,
+        scenario_name="Lógico",   # en el PDF siempre muestra "Monto total", no importa si es Personalizado
         amount_usd=amount,
         rate_cop=float(rate_display or 0),
         rate_ars=float(rate_ars_display or 0),
@@ -775,9 +775,16 @@ def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: f
 
     with st.form("quote_actions"):
         st.markdown("#### Elegí una opción")
-        opciones = {"Mínimo": q["minimo"], "Lógico": q["logico"], "Máximo": q["maximo"]}
-        default_idx_map = {"Mínimo": 0, "Lógico": 1, "Máximo": 2}
-        default_idx = default_idx_map.get(st.session_state.get("selected_quote_name", "Lógico"), 1)
+        opciones = {
+            "Mínimo":       q["minimo"],
+            "Lógico":       q["logico"],
+            "Máximo":       q["maximo"],
+            "Personalizado": None,
+        }
+        default_idx_map = {"Mínimo": 0, "Lógico": 1, "Máximo": 2, "Personalizado": 3}
+        default_idx = default_idx_map.get(
+            st.session_state.get("selected_quote_name", "Lógico"), 1
+        )
 
         choice = st.radio(
             "Opción de cotización",
@@ -788,19 +795,47 @@ def render_result_ui(q: Dict[str, Any], rate_display: float, rate_ars_display: f
             label_visibility="collapsed",
         )
 
+        # ── Precio personalizado ──────────────────────────────────────
+        custom_amount = None
+        if choice == "Personalizado":
+            custom_amount = st.number_input(
+                "Monto en USD",
+                min_value=0.0,
+                max_value=999999.0,
+                value=float(round(q["logico"])),
+                step=50.0,
+                format="%.2f",
+                help="Podés escribir el valor directamente o usar las flechas",
+            )
+            st.caption(
+                f"≈ COP {to_cop_local(rate_display, custom_amount):,}   ·   "
+                f"≈ ARS {int(round(custom_amount * rate_ars_display)):,}"
+                if rate_ars_display else
+                f"≈ COP {to_cop_local(rate_display, custom_amount):,}"
+            )
+        # ─────────────────────────────────────────────────────────────
+
         st.selectbox(
             "Moneda del PDF",
             ["USD", "COP", "ARS"],
-            index=["USD", "COP", "ARS"].index(st.session_state.get("pdf_currency", "USD")),
+            index=["USD", "COP", "ARS"].index(
+                st.session_state.get("pdf_currency", "USD")
+            ),
             key="pdf_currency",
             help="Define en qué moneda se mostrará el monto principal del PDF.",
         )
 
         submit = st.form_submit_button("Guardar cotización", use_container_width=True)
 
-    st.session_state["selected_quote_name"] = choice
-    st.session_state["selected_quote_amount"] = float(opciones[choice])
-    st.caption(f"Opción elegida: **{choice}** — **USD {opciones[choice]:,.2f}**")
+    # Resolver monto final
+    if choice == "Personalizado" and custom_amount is not None:
+        final_amount = float(custom_amount)
+    else:
+        final_amount = float(opciones[choice])
+
+    st.session_state["selected_quote_name"]   = choice
+    st.session_state["selected_quote_amount"] = final_amount
+    st.caption(f"Opción elegida: **{choice}** — **USD {final_amount:,.2f}**")
 
     if submit:
         ok = save_and_generate_pdf(rate_display, rate_ars_display)
